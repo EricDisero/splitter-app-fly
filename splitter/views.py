@@ -154,17 +154,24 @@ class SplitFile(TemplateView):
             json_data = {
                 'file_name': path,
             }
-            url = settings.BEAM_API_URL
+
+            # Get Beam API settings from environment variables
+            beam_api_url = settings.BEAM_API_URL
+            beam_api_token = settings.BEAM_API_TOKEN
+
+            logger.info(f'Using Beam API URL: {beam_api_url}')
+
             headers = {
                 'Accept': '*/*',
                 'Accept-Encoding': 'gzip, deflate',
-                'Authorization': f'Bearer {settings.BEAM_API_TOKEN}',
+                'Authorization': f'Bearer {beam_api_token}',
                 'Connection': 'keep-alive',
                 'Content-Type': 'application/json'
             }
+
             logger.info('Pinging beam cloud API')
             try:
-                response = requests.post(url, headers=headers, json=json_data)
+                response = requests.post(beam_api_url, headers=headers, json=json_data)
 
                 if response.status_code == 200:
                     logger.info('Got successful response from beam!')
@@ -290,6 +297,7 @@ class UploadFile(TemplateView):
             }
 
         return render(request, 'partials/file_upload_split.html', context=context)
+
 
 class LogoutView(TemplateView):
     def get(self, request):

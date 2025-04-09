@@ -61,11 +61,16 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv("SECRET_KEY", "default-secret-key")
 
-# ✅ CHANGED: DEBUG should be True for local testing
-DEBUG = True  # Set to False in AWS, but keep True locally
+# ✅ CHANGED: DEBUG mode based on environment variable
+DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
-# ✅ CHANGED: Explicit ALLOWED_HOSTS for local development
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '*']  # '*' allows AWS access
+# ✅ CHANGED: Explicit ALLOWED_HOSTS for local development and Fly.io
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '*']  # '*' allows AWS and Fly.io access
+
+# Add Fly.io hostname if FLY_APP_NAME is present
+FLY_APP_NAME = os.getenv("FLY_APP_NAME")
+if FLY_APP_NAME:
+    ALLOWED_HOSTS.append(f"{FLY_APP_NAME}.fly.dev")
 
 
 # Application definition
@@ -76,6 +81,7 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'whitenoise.runserver_nostatic',  # Added for Fly.io deployment
     'django.contrib.staticfiles',
     # add custom apps
     'splitter.apps.SplitterConfig',
@@ -83,6 +89,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Added for Fly.io deployment
     'django.contrib.sessions.middleware.SessionMiddleware',  # This must come before our middleware
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -161,16 +168,19 @@ USE_TZ = True
 MEDIA_URL = '/media/'
 MEDIA_ROOT = Path.joinpath(BASE_DIR, 'media')
 
-# ✅ CHANGED: Added STATICFILES_DIRS to ensure local CSS works
+# Static files configuration
 STATIC_URL = '/static/'
 
 STATICFILES_DIRS = [
     Path.joinpath(BASE_DIR, 'static/branding'),  # Branding assets
-    Path.joinpath(BASE_DIR, 'static'),  # ✅ Added general static files for local development
+    Path.joinpath(BASE_DIR, 'static'),  # Added general static files for local development
 ]
 
-# ✅ CHANGED: STATIC_ROOT ensures AWS `collectstatic` works, while STATICFILES_DIRS fixes local CSS
+# STATIC_ROOT ensures both Fly.io and AWS `collectstatic` works
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# WhiteNoise configuration for static files
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
@@ -178,32 +188,50 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Define S3 bucket name as a setting for easy reference
-S3_BUCKET_NAME = 'us-audio-bucket-2'
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'us-audio-bucket-2')
 
 # Beam API
-BEAM_API_URL = os.getenv('BEAM_API_URL')
+BEAM_API_URL = os.getenv('BEAM_API_URL', 'https://demucs-analysis-74163eb-v7.app.beam.cloud')
 BEAM_API_TOKEN = os.getenv('BEAM_API_TOKEN')
 
 # Security settings for HTTPS
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-CSRF_COOKIE_SECURE = True
-SESSION_COOKIE_SECURE = True
-#CSRF_COOKIE_SECURE = not DEBUG
-#SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_SECURE = not DEBUG
 CSRF_TRUSTED_ORIGINS = ['https://songsplit.net', 'https://www.songsplit.net']
 
-# Session settings **** REMOVE COMMENT FOR PROD ****
+# Add Fly.io domain to trusted origins if present
+if FLY_APP_NAME:
+    CSRF_TRUSTED_ORIGINS.append(f"https://{FLY_APP_NAME}.fly.dev")
+
+# Session settings
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'  # Store sessions in the database
 SESSION_COOKIE_AGE = 86400  # 24 hours in seconds
 SESSION_SAVE_EVERY_REQUEST = True  # Update the session expiry on every request
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False  # Don't expire when browser closes
 
-# Use file-based sessions instead of database-backed sessions
-SESSION_ENGINE = 'django.contrib.sessions.backends.file'
-SESSION_FILE_PATH = '/tmp/django_sessions'  # This directory is writable in Elastic Beanstalk
+# Use file-based sessions for Fly.io
+if os.getenv('FLY_APP_NAME'):
+    SESSION_ENGINE = 'django.contrib.sessions.backends.file'
+    SESSION_FILE_PATH = '/tmp/django_sessions'  # This directory is writable in Fly.io
+    os.makedirs(SESSION_FILE_PATH, exist_ok=True)
+else:
+    # Local development - use file-based sessions with a path in the project directory
+    SESSION_ENGINE = 'django.contrib.sessions.backends.file'
+    SESSION_FILE_PATH = Path.joinpath(BASE_DIR, 'django_sessions')
+    os.makedirs(SESSION_FILE_PATH, exist_ok=True)
 
-# RUN LOCAL session file path
-# SESSION_FILE_PATH = Path.joinpath(BASE_DIR, 'django_sessions')
+# Security settings for production
+if not DEBUG:
+    # HSTS settings
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
-# RUN LOCAL Make sure the directory exists
-# os.makedirs(SESSION_FILE_PATH, exist_ok=True)
+    # More security headers
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
+    X_FRAME_OPTIONS = 'DENY'
+
+    # Enable HTTPS redirect
+    SECURE_SSL_REDIRECT = True
