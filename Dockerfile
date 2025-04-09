@@ -1,23 +1,23 @@
 FROM python:3.11-slim
 
-# Set environment variables
+# Don't write .pyc files and enable unbuffered logging
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PATH="/usr/local/bin:${PATH}"
 
 # Set working directory
 WORKDIR /app
 
-# Install dependencies
+# Copy dependency file and install packages
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# Copy project files
+# Copy the rest of your application code
 COPY . .
 
-# Collect static files
+# Collect static files for Django
 RUN python manage.py collectstatic --noinput
 
-# Run the application
-CMD gunicorn splitter_django.wsgi:application --bind 0.0.0.0:8080
+# Expose port 8080 and run the app with Gunicorn
+EXPOSE 8080
+CMD ["gunicorn", "splitter_django.wsgi:application", "--bind", "0.0.0.0:8080"]
