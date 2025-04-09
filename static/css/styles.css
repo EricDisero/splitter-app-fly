@@ -1,0 +1,229 @@
+/* Main UI Styles for Song Splitter Application */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Poppins', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #111827 0%, #000000 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  padding: 1rem;
+}
+
+.container {
+  max-width: 380px;
+  width: 100%;
+  background-color: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 24px;
+  font-size: 28px;
+  background: linear-gradient(to right, #a78bfa, #60a5fa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+  font-family: 'Poppins', sans-serif !important;
+}
+
+.step {
+  display: none;
+}
+
+.step.active {
+  display: block;
+}
+
+.input-group {
+  margin-bottom: 16px;
+}
+
+.input-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #d1d5db;
+  text-align: center;
+}
+
+.input-field {
+  width: 100%;
+  padding: 12px;
+  background-color: rgba(55, 65, 81, 0.5);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
+  color: #e5e7eb;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.input-field:focus {
+  border-color: rgba(139, 92, 246, 0.8);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2);
+}
+
+.btn {
+  width: 100%;
+  padding: 12px;
+  margin-top: 12px;
+  background: linear-gradient(to right, #8b5cf6, #3b82f6);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  transform: scale(1.02);
+  background: linear-gradient(to right, #a78bfa, #60a5fa);
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn-green {
+  background: linear-gradient(to right, #10b981, #3b82f6);
+}
+
+.btn-green:hover {
+  background: linear-gradient(to right, #34d399, #60a5fa);
+}
+
+.error {
+  background-color: rgba(220, 38, 38, 0.3);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.dropzone {
+  border: 2px dashed #4b5563;
+  border-radius: 8px;
+  padding: 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 16px;
+}
+
+.dropzone:hover, .dropzone.drag-over {
+  border-color: rgba(139, 92, 246, 0.5);
+  background-color: rgba(139, 92, 246, 0.1);
+}
+
+.dropzone-icon {
+  color: #a78bfa;
+  font-size: 48px;
+  position: relative;
+  top: -18px; /* 👈 Raises it up */
+  margin-bottom: 4px;
+}
+
+.file-info {
+  background-color: rgba(55, 65, 81, 0.5);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.file-info-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-icon {
+  background-color: rgba(139, 92, 246, 0.2);
+  padding: 8px;
+  border-radius: 8px;
+  color: #a78bfa;
+}
+
+.file-name {
+  color: #e5e7eb;
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.success-icon {
+  background-color: rgba(16, 185, 129, 0.2);
+  padding: 8px;
+  border-radius: 8px;
+  color: #34d399;
+}
+
+.file-details {
+  color: #9ca3af;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.footer {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(75, 85, 99, 0.5);
+  text-align: center;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+/* Processing overlay with particles */
+.processing-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #0a0a14;
+  z-index: 1000;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.processing-message {
+  color: white;
+  font-size: 18px;
+  margin-top: 60px;
+  max-width: 80%;
+  text-align: center;
+  position: relative;
+  z-index: 2;
+  font-weight: bold;
+  padding: 10px;
+  text-shadow: 0 0 5px rgba(139, 92, 246, 0.5);
+}
+
+/* Animations */
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}

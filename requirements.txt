@@ -1,0 +1,11 @@
+asgiref
+boto3
+certifi
+charset-normalizer
+python-dotenv
+Django
+idna
+requests==2.31.0
+sqlparse
+tzdata
+urllib3

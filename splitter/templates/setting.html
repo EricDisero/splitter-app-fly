@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+
+{% load static %}
+
+
+{% block content %}
+  <div class="main position-relative">
+    <!-- import page -->
+    <div class="position-absolute top-0 end-0" id="exitBtn">
+      <a href="{% url 'home' %}">
+        <button class="settings-btn">
+          <img src="{% static 'Splitter_GUI_Assets_3/Exit_Icon_Default.png' %}" alt="Settings" />
+          <div class="overlay">
+            <img src="{% static 'Splitter_GUI_Assets_3/Exit_Icon_Hover.png' %}" alt="Hover Settings" />
+          </div>
+        </button>
+      </a>
+    </div>
+  </div>
+{% endblock %}

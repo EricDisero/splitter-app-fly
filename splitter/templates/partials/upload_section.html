@@ -1,0 +1,118 @@
+{% load static %}
+<div id="drop_zone" 
+ondrop="dropHandler(event);"
+ondragover="dragOverHandler(event);"
+ondragleave="dragLeaveHandler(event);">
+    <div class="top-label position-absolute start-50 translate-middle-x" 
+    style="margin-top: 30px;"
+
+    >DROP YOUR REFERENCE FILE HERE</div>
+    <img id="rectagle_border" src="{% static 'Splitter_GUI_Assets_3/Rectangle Default.png' %}" class="position-relative"/>
+    <div  style="display:block;" id="uploadResult">
+        <img src="{% static 'Splitter_GUI_Assets_3/File Drop Icon.png' %}" 
+        class="position-absolute bottom-0 start-50 translate-middle-x"
+        style="margin-bottom: 125px;"/>
+
+        <div class="position-absolute bottom-0 start-50 translate-middle-x">
+            <!-- <input type="text" class="input-with-background" placeholder="Enter text here"> -->
+
+            <button class="browser-btn" type= "button" id="browseBtn" name="file" onclick="openFileDialog()">
+                <img src="{% static 'Splitter_GUI_Assets_3/Browse Button Default.png' %}" alt="Browser" />
+                <div class="overlay">
+                <img src="{% static 'Splitter_GUI_Assets_3/Browse Button Hover.png' %}" alt="Hover Browser" />
+                </div>
+            </button>
+        </div>
+        <div id="uploadingSpinner" style="display: none;">
+            <div class="d-flex justify-content-center align-items-center top-label position-absolute bottom-0 start-50 translate-middle-x"
+            style="margin-bottom: 40px;">
+                <div>UPLOADING...</div>
+                <div class="spinner-border" style="width: 3rem; height: 3rem; margin-left: 15px;" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        </div>
+        <form
+        id="fileUploadForm"  
+        hx-post="{% url 'upload_audio' %}" 
+        hx-encoding="multipart/form-data"
+        hx-target="#ui_replacing"
+        hx-swap="innerHTML">
+            {% csrf_token %}
+            <input type="file" id="fileInput" style="display: none;" name="file">
+            <button type="submit" id="uploadButton" style="display: none;"></button>
+        </form>
+        <script>
+            function dragOverHandler(ev) {
+                console.log("File(s) in drop zone");
+
+                // Prevent default behavior (Prevent file from being opened)
+                ev.preventDefault();
+                 // Get the img element
+                var imgElement = document.getElementById('rectagle_border');
+
+                // Update the src attribute
+                imgElement.src = "{% static 'Splitter_GUI_Assets_3/Rectangle Hover.png' %}";
+            }
+            function dragLeaveHandler(ev) {
+                console.log("File(s) left drop zone");
+
+                // Get the img element
+                var imgElement = document.getElementById('rectagle_border');
+
+                // Restore the original src attribute
+                imgElement.src = "{% static 'Splitter_GUI_Assets_3/Rectangle Default.png' %}";
+            }
+
+            function dropHandler(ev) {
+                console.log("File(s) dropped");
+
+                // Prevent default behavior (Prevent file from being opened)
+                ev.preventDefault();
+
+                const fileInput = document.getElementById('fileInput');
+                console.log("Got element");
+                
+                if (ev.dataTransfer.items) {
+                    // Use DataTransferItemList interface to access the file(s)
+                    const dt = new DataTransfer();
+                    [...ev.dataTransfer.items].forEach((item, i) => {
+                    // If dropped items aren't files, reject them
+                    if (item.kind === "file") {
+                        const file = item.getAsFile();
+                        console.log(`… file[${i}].name = ${file.name}`);
+                        dt.items.add(file);
+                    }
+                    });
+
+                    // Set the files property of the file input element
+                    fileInput.files = dt.files;
+
+                    // Optionally, trigger the upload process
+                    document.getElementById('uploadButton').click();
+
+                } else {
+                    // Use DataTransfer interface to access the file(s)
+                    [...ev.dataTransfer.files].forEach((file, i) => {
+                    console.log(`… file[${i}].name = ${file.name}`);
+                    });
+                }
+            }
+
+            function openFileDialog() {
+                document.getElementById('fileInput').click();
+            }
+        
+            // Trigger HTMX post when file is selected
+            document.getElementById('fileInput').addEventListener('change', function () {
+            document.getElementById('uploadButton').click();
+            });
+        
+            document.getElementById('fileUploadForm').addEventListener('submit', function () {
+                // Hide the button after form submission
+                document.getElementById('browseBtn').style.display = 'none';
+                document.getElementById('uploadingSpinner').style.display = 'block';
+            });
+        </script>
+    </div>
+</div>

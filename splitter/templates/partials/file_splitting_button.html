@@ -1,0 +1,39 @@
+{% load static %}
+<div class="top-label position-absolute start-50 translate-middle-x" id="top_label" style="margin-top: 30px;">FILE DROPPED:</div>
+<img src="{% static 'Splitter_GUI_Assets_3/Rectangle Default.png' %}" class="position-relative"/>
+<div class="audio-label position-absolute bottom-50 start-50 translate-middle-x" id="audioName">
+    {{file_name}}
+</div>
+<div id="replacing_right_side" class="position-absolute bottom-0 start-50 translate-middle-x">
+    <form id="fileForm" hx-post="{% url 'split' %}" hx-target="#ui_replacing" hx-swap="innerHTML">
+        {% csrf_token %}
+        <input type="hidden" id="base64_content" name="base64_content" value="{{base64_content}}">
+        <input type="hidden" id="file_name" name="file_name" value="{{file_name}}">
+        <button class="browser-btn" type="submit" id="splitBtn" style="display: block;">
+            <img src="{% static 'Splitter_GUI_Assets_3/Split Button 2 Default.png' %}" alt="Split" />
+            <div class="overlay">
+                <img src="{% static 'Splitter_GUI_Assets_3/Split Button 2 Hover.png' %}" alt="Hover Split" />
+            </div>
+        </button>
+        <div id="processingSpinner" style="display: none;">
+            <div class="d-flex justify-content-center align-items-center top-label position-absolute bottom-0 start-50 translate-middle-x" style="margin-bottom: 40px;">
+                <div>PROCESSING...</div>
+                <div class="spinner-border" style="width: 3rem; height: 3rem; margin-left: 15px;" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        </div>
+        <script>
+            document.getElementById('fileForm').addEventListener('submit', function () {
+                // Show the animation
+                if (typeof showProcessingAnimation === 'function') {
+                    showProcessingAnimation();
+                }
+
+                // Hide the button after form submission
+                document.getElementById('splitBtn').style.display = 'none';
+                document.getElementById('processingSpinner').style.display = 'block';
+            });
+        </script>
+    </form>
+</div>

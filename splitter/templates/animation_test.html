@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle Animation Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        #processing-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 9999;
+            background-color: #1e1e1e;
+        }
+        #animation-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #animation-phrase {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #565656;
+            font-size: 20px;
+            text-align: center;
+            width: 80%;
+            font-family: 'Arial', sans-serif;
+        }
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 10000;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- Processing overlay -->
+    <div id="processing-overlay">
+        <canvas id="animation-canvas"></canvas>
+        <div id="animation-phrase"></div>
+    </div>
+
+    <!-- Controls panel -->
+    <div id="controls">
+        <div>
+            <label for="speed">Initial Speed: <span id="speed-value">15</span></label>
+            <input type="range" id="speed" min="1" max="30" value="15" step="1">
+        </div>
+        <div>
+            <label for="deceleration">Deceleration: <span id="deceleration-value">0.8</span></label>
+            <input type="range" id="deceleration" min="0.5" max="0.99" value="0.8" step="0.01">
+        </div>
+        <div>
+            <label for="fade">Fade Rate: <span id="fade-value">2</span></label>
+            <input type="range" id="fade" min="0.5" max="5" value="2" step="0.5">
+        </div>
+    </div>
+
+    <!-- Particle animation script -->
+    <script>
+        // All animation code in a single place
+        (function() {
+            // Animation variables
+            let canvas, ctx, animationFrame;
+            let particles = [];
+
+            // Configurable parameters
+            let initialSpeed = 15;
+            let deceleration = 0.87;
+            let fadeRate = 2;
+
+            // Setup control panel
+            document.getElementById('speed').addEventListener('input', function(e) {
+                initialSpeed = parseFloat(e.target.value);
+                document.getElementById('speed-value').textContent = initialSpeed;
+            });
+
+            document.getElementById('deceleration').addEventListener('input', function(e) {
+                deceleration = parseFloat(e.target.value);
+                document.getElementById('deceleration-value').textContent = deceleration;
+            });
+
+            document.getElementById('fade').addEventListener('input', function(e) {
+                fadeRate = parseFloat(e.target.value);
+                document.getElementById('fade-value').textContent = fadeRate;
+            });
+
+            // Phrases to display during processing
+            const phrases = [
+                "Calibrating quantum entanglement parameters.",
+                "Tuning the photon oscillation wavelengths.",
+                "Aligning the cybernetic neural network.",
+                "Processing your audio into separate tracks...",
+                "Analyzing frequency spectrum bands...",
+                "Isolating vocals using neural networks...",
+                "Separating drum patterns from mix...",
+                "Extracting bass frequencies...",
+                "Filtering instrument harmonics...",
+                "Applying stem separation algorithms...",
+                "Preparing final audio components..."
+            ];
+
+            let currentPhrase = 0;
+            let phraseInterval;
+
+            // Initialize animation
+            function initAnimation() {
+                // Get canvas
+                canvas = document.getElementById('animation-canvas');
+                if (!canvas) return;
+
+                ctx = canvas.getContext('2d');
+
+                // Set canvas size
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                // Clear existing particles
+                particles = [];
+
+                // Set up phrase rotation
+                const phraseElement = document.getElementById('animation-phrase');
+                if (phraseElement) {
+                    // Shuffle phrases
+                    const shuffledPhrases = [...phrases].sort(() => Math.random() - 0.5);
+
+                    // Display first phrase
+                    phraseElement.textContent = shuffledPhrases[0];
+
+                    // Set up interval for changing phrases
+                    if (phraseInterval) clearInterval(phraseInterval);
+
+                    let index = 1;
+                    phraseInterval = setInterval(function() {
+                        phraseElement.textContent = shuffledPhrases[index];
+                        index = (index + 1) % shuffledPhrases.length;
+                    }, 5000);
+                }
+
+                // Start animation loop
+                if (animationFrame) cancelAnimationFrame(animationFrame);
+                animate();
+
+                // Handle window resize
+                window.addEventListener('resize', handleResize);
+            }
+
+            // Main animation loop
+            function animate() {
+                // Clear canvas
+                ctx.fillStyle = 'rgba(30, 30, 30, 1)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Add particles if needed
+                if (particles.length < 500) {
+                    addParticle();
+                }
+
+                // Update and draw particles
+                for (let i = particles.length - 1; i >= 0; i--) {
+                    const particle = particles[i];
+
+                    // Move particle - using current settings
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.alpha -= fadeRate;
+                    particle.vx *= deceleration;
+                    particle.vy *= deceleration;
+
+                    // Remove faded particles
+                    if (particle.alpha <= 0) {
+                        particles.splice(i, 1);
+                        continue;
+                    }
+
+                    // Draw particle
+                    ctx.beginPath();
+                    ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(116, 80, 219, ${particle.alpha / 255})`;
+                    ctx.fill();
+                }
+
+                // Request next frame
+                animationFrame = requestAnimationFrame(animate);
+            }
+
+            // Create a new particle
+            function addParticle() {
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 5 + initialSpeed;
+                const distance = Math.random() * 10 + 1;
+
+                particles.push({
+                    x: centerX + Math.cos(angle) * speed * distance,
+                    y: centerY + Math.sin(angle) * speed * distance,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: Math.random() * 2 + 1,
+                    alpha: Math.random() * 100 + 150
+                });
+            }
+
+            // Handle window resize
+            function handleResize() {
+                if (canvas) {
+                    canvas.width = window.innerWidth;
+                    canvas.height = window.innerHeight;
+                }
+            }
+
+            // Start the animation when page loads
+            document.addEventListener('DOMContentLoaded', initAnimation);
+        })();
+    </script>
+</body>
+</html>

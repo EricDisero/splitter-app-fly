@@ -1,0 +1,72 @@
+body {
+    background-color: #1e1e1e;
+    color: #5f5f5f;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+  .main {
+    width: 100vw;
+    height: 100vh;
+    padding-left: 0rem;
+    padding-right: 0rem;
+  }
+  .settings-btn{
+    position: relative;
+    background-color: transparent;
+    width: auto;
+    height: auto;
+    border-color: transparent;
+    display:block;
+    border-width: 0cap;
+    margin-top: 2rem;
+    margin-right: 2rem;
+    padding: 0;
+  }
+  .browser-btn{
+    position: relative;
+    background-color: transparent;
+    width: auto;
+    height: auto;
+    border-color: transparent;
+    display:block;
+    border-width: 0cap;
+    margin-bottom: 2rem;
+    padding: 0;
+  }
+  .overlay {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 100%;
+    width: 100%;
+    opacity: 0;
+    background-color: #1e1e1e;
+  }
+  .top-label {
+  width: max-content;
+  margin-top: 3rem;
+  color: rgb(95, 95, 95);
+  /* font-family: 'Source Sans Pro'; */
+  font-size: 18pt;
+  font-weight: bold;
+  font-style: italic;
+  background-color: transparent;
+  }
+  .audio-label {
+    width: max-content;
+    color: rgb(95, 95, 95);
+    /* font-family: 'Source Sans Pro'; */
+    font-size: 18pt;
+    font-weight: bold;
+    background-color: transparent;
+  }
+  .settings-btn:hover .overlay {
+    opacity: 1;
+  }
+  .browser-btn:hover .overlay {
+    opacity: 1;
+  }

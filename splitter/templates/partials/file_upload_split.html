@@ -1,0 +1,185 @@
+{% load static %}
+
+{% if error_message %}
+    <div class="error">{{ error_message }}</div>
+{% endif %}
+
+{% if keygen_section %}
+    <!-- Step 1: License Key -->
+    <div class="step active" id="step-license">
+        <form hx-post="{% url 'validate_keygen' %}" hx-target="#app-container" hx-swap="innerHTML">
+            {% csrf_token %}
+            <div class="input-group">
+                <label class="input-label">Enter your license key to begin</label>
+                <input type="text" id="keygen_license" name="keygen_license" class="input-field" placeholder="XXXX-XXXX-XXXX-XXXX">
+            </div>
+            <button type="submit" class="btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+                </svg>
+                Validate License
+            </button>
+        </form>
+    </div>
+{% endif %}
+
+{% if upload_section %}
+    <!-- Step 2: Upload -->
+    <div class="step active" id="step-upload">
+        <form id="fileUploadForm" hx-post="{% url 'upload_audio' %}" hx-encoding="multipart/form-data" hx-target="#app-container" hx-swap="innerHTML">
+            {% csrf_token %}
+            <div class="dropzone" id="dropzone"
+                 ondrop="dropHandler(event);"
+                 ondragover="dragOverHandler(event);"
+                 ondragleave="dragLeaveHandler(event);">
+                <div class="dropzone-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                </div>
+                <div class="input-label">Drop your audio file here</div>
+                <div style="color: #6b7280; font-size: 14px;">or click to browse</div>
+                <div style="color: #6b7280; font-size: 12px; margin-top: 8px;">Supports .mp3, .wav, .flac, .aif</div>
+            </div>
+            <input type="file" id="fileInput" style="display: none;" name="file" accept=".mp3,.wav,.flac,.aif">
+            <button type="submit" id="uploadButton" style="display: none;"></button>
+        </form>
+        <script>
+            function dragOverHandler(ev) {
+                ev.preventDefault();
+                document.getElementById('dropzone').classList.add('drag-over');
+            }
+
+            function dragLeaveHandler(ev) {
+                ev.preventDefault();
+                document.getElementById('dropzone').classList.remove('drag-over');
+            }
+
+            function dropHandler(ev) {
+                ev.preventDefault();
+                document.getElementById('dropzone').classList.remove('drag-over');
+
+                const fileInput = document.getElementById('fileInput');
+
+                if (ev.dataTransfer.items) {
+                    // Use DataTransferItemList interface to access the file(s)
+                    const dt = new DataTransfer();
+                    [...ev.dataTransfer.items].forEach((item, i) => {
+                        // If dropped items aren't files, reject them
+                        if (item.kind === "file") {
+                            const file = item.getAsFile();
+                            console.log(`… file[${i}].name = ${file.name}`);
+                            dt.items.add(file);
+                        }
+                    });
+
+                    // Set the files property of the file input element
+                    fileInput.files = dt.files;
+
+                    // Trigger the upload process
+                    document.getElementById('uploadButton').click();
+                } else {
+                    // Use DataTransfer interface to access the file(s)
+                    [...ev.dataTransfer.files].forEach((file, i) => {
+                        console.log(`… file[${i}].name = ${file.name}`);
+                    });
+                }
+            }
+
+            // Trigger form submission when file is selected
+            document.getElementById('fileInput').addEventListener('change', function () {
+                document.getElementById('uploadButton').click();
+            });
+
+            // Show processing animation when form is submitted
+            document.getElementById('fileUploadForm').addEventListener('submit', function () {
+                // Show uploading animation
+                const uploadingDiv = document.createElement('div');
+                uploadingDiv.className = 'input-label';
+                uploadingDiv.style.marginTop = '20px';
+                uploadingDiv.innerHTML = '<div>UPLOADING...</div>';
+                document.getElementById('dropzone').appendChild(uploadingDiv);
+            });
+        </script>
+    </div>
+{% endif %}
+
+{% if split_section %}
+    <!-- Step 3: Splitting -->
+    <div class="step active" id="step-splitting">
+        <div class="input-label">Ready to process your file</div>
+        <div class="file-info">
+            <div class="file-info-header">
+                <div class="file-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 18V5l12-2v13"></path>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
+                </div>
+                <div class="file-name" id="filename-display">{{ file_name }}</div>
+            </div>
+        </div>
+
+        <form id="fileForm" hx-post="{% url 'split' %}" hx-target="#app-container" hx-swap="innerHTML">
+            {% csrf_token %}
+            <input type="hidden" id="file_name" name="file_name" value="{{ file_name }}">
+            <button type="submit" class="btn" id="split-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                </svg>
+                Split Audio
+            </button>
+        </form>
+
+        <script>
+            document.getElementById('fileForm').addEventListener('submit', function () {
+                // Show the processing animation
+                if (typeof showProcessingAnimation === 'function') {
+                    showProcessingAnimation();
+                }
+            });
+        </script>
+    </div>
+{% endif %}
+
+{% if download_section %}
+    <script>
+        // Hide the processing animation when the response shows download button
+        if (typeof hideProcessingAnimation === 'function') {
+            hideProcessingAnimation();
+        }
+    </script>
+
+    <!-- Step 4: Download -->
+    <div class="step active" id="step-download">
+        <div class="input-label">Splitting complete!</div>
+        <div class="file-info">
+            <div class="file-info-header">
+                <div class="success-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>
+                </div>
+                <div class="file-name" id="result-filename">{{ zip_file_name }}</div>
+            </div>
+            <div class="file-details">Contains drums, bass, vocal and instrument tracks</div>
+        </div>
+
+        <form method="post" action="{% url 'download' %}">
+            {% csrf_token %}
+            <input type="hidden" id="zip_file_name" name="zip_file_name" value="{{ zip_file_name }}">
+            <button type="submit" class="btn btn-green" id="download-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download Stems
+            </button>
+        </form>
+    </div>
+{% endif %}

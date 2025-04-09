@@ -1,0 +1,30 @@
+
+{% load static %}
+
+<div class="top-label position-absolute start-50 translate-middle-x" 
+id="top_label"
+style="margin-top: 30px;"
+>SPLITTING COMPLETE!</div>
+<img src="{% static 'Splitter_GUI_Assets_3/Rectangle Default.png' %}" class="position-relative"/>
+
+<img src="{% static 'Splitter_GUI_Assets_3/Download Icon.png' %}" 
+class="position-absolute position-absolute start-50 translate-middle-x" 
+style="margin-top: 100px;"/>
+
+
+<div id="replacing_right_side" class="position-absolute bottom-0 start-50 translate-middle-x">
+    <form 
+    method="post"
+    action="{% url 'download' %}">
+        {% csrf_token %}
+        <input type="hidden" id="zip_file_name" name="zip_file_name" value="{{zip_file_name}}">
+        <button 
+        class="browser-btn" 
+        type= "submit" 
+        id="download_btn">
+            <img src="{% static 'Splitter_GUI_Assets_3/Download Button Default.png' %}" alt="Download" />
+            <div class="overlay">
+                <img src="{% static 'Splitter_GUI_Assets_3/Download Button Hover.png' %}" alt="Hover Download" />
+        </div>
+    </form>
+</div>
