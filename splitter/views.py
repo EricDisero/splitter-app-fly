@@ -61,34 +61,43 @@ class HomePage(TemplateView):
 class ValidateKeygen(TemplateView):
     def post(self, request):
         try:
-            logger.info(request.POST)
-            key = request.POST.get('keygen_license')
-            logger.info(key)
+            logger.info("POST data: %s", request.POST)
+            # Get and trim the key; use a default empty string if not provided.
+            key = request.POST.get('keygen_license', '').strip()
+            if not key:
+                # Immediately return an error if the key is empty.
+                context = {
+                    'keygen_section': True,
+                    'error_message': 'License key cannot be empty!'
+                }
+                logger.info("Empty key submitted.")
+                return render(request, 'partials/file_upload_split.html', context=context)
 
+            logger.info("Key received: %s", key)
+
+            # Validate the key using the external Keygen API.
             validation = check_key(key=key)
-            logger.info(validation)
+            logger.info("Validation result: %s", validation)
 
             if validation:
-                # Store the validated license in session
+                # Store valid license in session.
                 store_license_in_session(request, key)
-
-                context = {
-                    'upload_section': True
-                }
+                context = {'upload_section': True}
             else:
                 context = {
                     'keygen_section': True,
-                    'error_message': 'Key not valid!',
+                    'error_message': 'Key not valid!'
                 }
             return render(request, 'partials/file_upload_split.html', context=context)
         except Exception as e:
-            logger.error(f"Error validating keygen: {str(e)}")
+            logger.error("Error validating keygen: %s", str(e))
             logger.error(traceback.format_exc())
             context = {
                 'keygen_section': True,
-                'error_message': f'Error validating key: {str(e)}',
+                'error_message': f'Error validating key: {str(e)}'
             }
             return render(request, 'partials/file_upload_split.html', context=context)
+
 
 
 class DownloadFile(TemplateView):
