@@ -1,14 +1,11 @@
 app = "splitter-app"
-primary_region = "sjc" # San Jose, CA - modify as needed
+primary_region = "sjc"
 kill_signal = "SIGINT"
 kill_timeout = "5s"
 
 [env]
   PORT = "8080"
   DJANGO_SETTINGS_MODULE = "splitter_django.settings"
-  BEAM_API_URL = "https://demucs-analysis-74163eb-v7.app.beam.cloud"
-  LOG_LEVEL = "DEBUG"
-  S3_BUCKET_NAME = "us-audio-bucket-2"
 
 [http_service]
   internal_port = 8080
@@ -16,12 +13,3 @@ kill_timeout = "5s"
   auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
-
-[mounts]
-  source = "splitter_data"
-  destination = "/app/media"
-
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "2gb"

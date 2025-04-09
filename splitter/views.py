@@ -218,8 +218,12 @@ class SplitFile(TemplateView):
 class UploadFile(TemplateView):
     def post(self, request):
         try:
+            # Initialize S3 client if needed
+            from django.conf import settings
+            s3_client = settings.get_s3_client()
+
             # Check if S3 client is properly initialized
-            if settings.S3 is None:
+            if s3_client is None:
                 logger.error("S3 client is not initialized")
                 context = {
                     'error_message': 'AWS S3 connection error',
