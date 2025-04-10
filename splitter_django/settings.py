@@ -25,7 +25,7 @@ logger.propagate = False
 # SECURITY SETTINGS
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-default-key-for-development")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.fly.dev']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.fly.dev', 'www.songsplit.net', 'songsplit.net',]
 """ALLOWED_HOSTS = ['*']"""
 
 # Application definition

@@ -159,3 +159,4 @@ fly machine run -a splitter-app --volume splitter_volume:/data --region sea -- b
 
 Keep this file as your go-to deployment checklist for your Fly.io + Django + SQLite app with persistent storage!
 
+**** PS. Don't forget to add domain URLs to "Allowed Hosts" in settings.py for DNS! ****
