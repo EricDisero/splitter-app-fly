@@ -186,7 +186,7 @@ class SplitFile(TemplateView):
                     settings.BEAM_API_URL,
                     headers=headers,
                     json=payload,
-                    timeout=120  # 2 minute timeout
+                    timeout=300  # 5 minute timeout
                 )
             except requests.exceptions.Timeout:
                 logger.error("Beam API request timed out after 120 seconds")
