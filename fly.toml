@@ -1,5 +1,5 @@
 app = "splitter-app"
-primary_region = "sjc"
+primary_region = "sea"  # Seattle (closest to Oregon)
 kill_signal = "SIGINT"
 kill_timeout = "5s"
 
@@ -16,3 +16,21 @@ dockerfile = "Dockerfile"
   auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
+  processes = ["app"]
+
+[http_service.http_options]
+  backend_timeout = "300s"  # 5 minutes
+
+[processes]
+  app = "gunicorn splitter_django.wsgi:application --workers=2 --threads=2 --timeout=300"
+
+[vm]
+  size = "shared-cpu-1x"
+  memory = 2048
+
+#[deploy]
+  #release_command = "python manage.py migrate"
+
+[mounts]
+  source = "splitter_volume"
+  destination = "/data"

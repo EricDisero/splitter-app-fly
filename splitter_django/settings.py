@@ -26,6 +26,7 @@ logger.propagate = False
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-default-key-for-development")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '.fly.dev']
+"""ALLOWED_HOSTS = ['*']"""
 
 # Application definition
 INSTALLED_APPS = [
@@ -77,7 +78,10 @@ WSGI_APPLICATION = 'splitter_django.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        #'NAME': BASE_DIR / 'db.sqlite3',
+        # THIS IS THE SAVED VOLUME IN FLY.IO
+        'NAME': '/data/db.sqlite3',
+
     }
 }
 
@@ -150,3 +154,8 @@ if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
+
+# Allow Fly.io origin for CSRF in dev
+CSRF_TRUSTED_ORIGINS = ['https://splitter-app.fly.dev']
+
+S3 = get_s3_client()
