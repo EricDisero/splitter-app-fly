@@ -2,6 +2,14 @@ from django.shortcuts import render, HttpResponse, redirect
 from django.views.generic import TemplateView
 from django.conf import settings
 from .utils import check_key, is_license_valid, store_license_in_session, clear_license
+from django.urls import reverse  # Add this import
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.views import View
+
+import json
 
 import base64
 import boto3
@@ -189,7 +197,7 @@ class SplitFile(TemplateView):
                     timeout=300  # 5 minute timeout
                 )
             except requests.exceptions.Timeout:
-                logger.error("Beam API request timed out after 120 seconds")
+                logger.error("Beam API request timed out after 300 seconds")
                 return render(request, 'partials/file_upload_split.html', {
                     'error_message': "Processing timed out. Please try again or use a smaller file.",
                     'upload_section': True
@@ -231,18 +239,33 @@ class SplitFile(TemplateView):
                 result = response.json()
                 logger.info(f"Successfully processed file. Result: {result}")
 
-                if 'file_name' not in result:
-                    logger.error(f"Missing file_name in Beam API response: {result}")
+                # Check if it's the new format with base_name and stem_files
+                if 'base_name' in result and 'stem_files' in result:
+                    base_name = result['base_name']
+                    stem_files = result['stem_files']
+
+                    # Convert stem_files to JSON string
+                    stem_files_json = json.dumps(stem_files)
+
+                    # Use the original download UI but with stem files info
+                    return render(request, 'partials/file_upload_split.html', {
+                        'zip_file_name': base_name,  # This is now the base name without extension
+                        'stem_files_json': stem_files_json,  # Add stem files as JSON
+                        'download_section': True
+                    })
+
+                # If it's the old format with just a zip file
+                elif 'file_name' in result:
+                    return render(request, 'partials/file_upload_split.html', {
+                        'zip_file_name': result['file_name'],
+                        'download_section': True
+                    })
+                else:
+                    logger.error(f"Invalid response format from Beam API: {result}")
                     return render(request, 'partials/file_upload_split.html', {
                         'error_message': "Invalid response from processing service",
                         'upload_section': True
                     })
-
-                # Success case - render download section
-                return render(request, 'partials/file_upload_split.html', {
-                    'zip_file_name': result['file_name'],
-                    'download_section': True
-                })
 
             except ValueError:
                 logger.error(f"Could not parse Beam API JSON response: {response.text[:1000]}")
@@ -262,40 +285,213 @@ class SplitFile(TemplateView):
         finally:
             logger.info("=== SplitFile.post completed ===")
 
+    def generate_presigned_urls(self, stem_files):
+        """Generate presigned URLs for each stem file"""
+        stem_download_urls = []
+
+        try:
+            # Create S3 client
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                region_name="us-west-2"
+            )
+
+            # Generate presigned URL for each stem file
+            for stem_file in stem_files:
+                s3_key = stem_file["s3_key"]
+                file_name = stem_file["file_name"]
+
+                try:
+                    # Create a presigned URL that will work for 5 minutes
+                    presigned_url = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={
+                            'Bucket': settings.S3_BUCKET_NAME,
+                            'Key': s3_key,
+                            'ResponseContentDisposition': f'attachment; filename="{file_name}"'
+                        },
+                        ExpiresIn=300  # 5 minutes
+                    )
+
+                    stem_download_urls.append({
+                        "file_name": file_name,
+                        "download_url": presigned_url
+                    })
+
+                    logger.info(f"Generated presigned URL for {file_name}")
+
+                except Exception as e:
+                    logger.error(f"Error generating presigned URL for {s3_key}: {str(e)}")
+
+        except Exception as e:
+            logger.error(f"Error setting up S3 client for presigned URLs: {str(e)}")
+
+        return stem_download_urls
+
 
 class DownloadFile(TemplateView):
     def post(self, request):
         try:
-            file_name = request.POST.get('zip_file_name')
-            logger.info(f"Downloading file: {file_name}")
+            # Get base name from the form
+            base_name = request.POST.get('base_name')
+            stem_files_json = request.POST.get('stem_files')
 
-            buffer = io.BytesIO()
-            s3_client = settings.S3
+            logger.info(f"Starting download of stems for: {base_name}")
 
-            s3_client.download_fileobj(settings.S3_BUCKET_NAME, file_name, buffer)
-            logger.info(f"Downloaded {file_name}")
+            if not base_name or not stem_files_json:
+                logger.error("Missing required parameters for download")
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'Missing stem file information'
+                }, status=400)
 
             try:
-                s3_client.delete_object(Bucket=settings.S3_BUCKET_NAME, Key=file_name)
-                logger.info(f"Deleted {file_name} from S3")
-            except Exception as e:
-                logger.warning(f"Failed to delete file: {e}")
+                stem_files = json.loads(stem_files_json)
+            except json.JSONDecodeError:
+                logger.error(f"Invalid stem files JSON: {stem_files_json}")
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'Invalid stem file information'
+                }, status=400)
 
-            buffer.seek(0)
-            response = HttpResponse(buffer.getvalue(), content_type='application/octet-stream')
-            response['Content-Disposition'] = f'attachment; filename="{file_name}"'
-            return response
+            # Create S3 presigned URLs for each stem file for direct browser download
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                region_name="us-west-2"
+            )
+
+            # Prepare the list of download URLs
+            download_urls = []
+            for stem_file in stem_files:
+                s3_key = stem_file["s3_key"]
+                file_name = stem_file["file_name"]
+
+                try:
+                    # Create presigned URL
+                    presigned_url = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={
+                            'Bucket': settings.S3_BUCKET_NAME,
+                            'Key': s3_key,
+                            'ResponseContentDisposition': f'attachment; filename="{file_name}"'
+                        },
+                        ExpiresIn=300  # 5 minutes
+                    )
+
+                    download_urls.append({
+                        'url': presigned_url,
+                        'filename': file_name
+                    })
+
+                    logger.info(f"Generated presigned URL for {file_name}")
+
+                except Exception as e:
+                    logger.error(f"Error generating presigned URL for {s3_key}: {str(e)}")
+                    # Continue even if one URL generation fails
+                    download_urls.append({
+                        'url': None,
+                        'filename': file_name,
+                        'error': str(e)
+                    })
+
+            # Return JSON response with download URLs
+            return JsonResponse({
+                'status': 'success',
+                'base_name': base_name,
+                'download_urls': download_urls
+            })
 
         except Exception as e:
-            logger.error("Download error: %s", str(e))
+            logger.error(f"General error in download: {str(e)}")
             logger.error(traceback.format_exc())
-            return render(request, 'partials/file_upload_split.html', {
-                'error_message': 'Download failed',
-                'upload_section': True
-            })
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Download processing error occurred'
+            }, status=500)
 
 
 class LogoutView(TemplateView):
     def get(self, request):
         clear_license(request)
         return redirect('home')
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CleanupS3View(View):
+    def post(self, request):
+        try:
+            # Parse the JSON data from the request
+            body = json.loads(request.body) if request.body else {}
+            stem_files_json = body.get('stem_files', '[]')
+
+            # If stem_files is a string (like from a form), try to parse it
+            if isinstance(stem_files_json, str):
+                try:
+                    stem_files = json.loads(stem_files_json)
+                except json.JSONDecodeError:
+                    logger.error(f"Could not parse stem files JSON: {stem_files_json}")
+                    return JsonResponse({
+                        'status': 'error',
+                        'message': 'Invalid stem files data'
+                    }, status=400)
+            elif isinstance(stem_files_json, list):
+                stem_files = stem_files_json
+            else:
+                logger.error(f"Unexpected stem files type: {type(stem_files_json)}")
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'Invalid stem files format'
+                }, status=400)
+
+            # Create S3 client
+            s3_client = boto3.client(
+                's3',
+                aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                region_name="us-west-2"
+            )
+
+            # Delete each file from S3
+            deleted_files = []
+            failed_files = []
+
+            for stem_file in stem_files:
+                # Handle both dictionary and string input formats
+                s3_key = stem_file.get('s3_key', stem_file) if isinstance(stem_file, (dict, str)) else None
+
+                if not s3_key:
+                    logger.warning(f"Skipping invalid stem file entry: {stem_file}")
+                    continue
+
+                try:
+                    s3_client.delete_object(
+                        Bucket=settings.S3_BUCKET_NAME,
+                        Key=s3_key
+                    )
+                    deleted_files.append(s3_key)
+                    logger.info(f"Deleted {s3_key} from S3")
+                except Exception as e:
+                    logger.error(f"Error deleting {s3_key} from S3: {str(e)}")
+                    failed_files.append({
+                        's3_key': s3_key,
+                        'error': str(e)
+                    })
+
+            return JsonResponse({
+                'status': 'success',
+                'message': f'Processed {len(stem_files)} files',
+                'deleted_files': deleted_files,
+                'failed_files': failed_files
+            })
+
+        except Exception as e:
+            logger.error(f"Unexpected error in S3 cleanup: {str(e)}")
+            logger.error(traceback.format_exc())
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Unexpected error during cleanup'
+            }, status=500)

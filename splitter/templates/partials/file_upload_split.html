@@ -166,13 +166,17 @@
                 </div>
                 <div class="file-name" id="result-filename">{{ zip_file_name }}</div>
             </div>
-            <div class="file-details">Contains drums, bass, vocal and instrument tracks</div>
+            <div class="file-details">Contains drums, bass, vocal and EE tracks</div>
         </div>
 
-        <form method="post" action="{% url 'download' %}">
+        <!-- Change the button type to "button" -->
+        <form id="download-form" method="post" action="{% url 'download' %}">
             {% csrf_token %}
-            <input type="hidden" id="zip_file_name" name="zip_file_name" value="{{ zip_file_name }}">
-            <button type="submit" class="btn btn-green" id="download-btn">
+            <input type="hidden" id="zip_file_name" name="base_name" value="{{ zip_file_name }}">
+            {% if stem_files_json %}
+            <input type="hidden" id="stem_files" name="stem_files" value="{{ stem_files_json }}">
+            {% endif %}
+            <button type="button" class="btn btn-green" id="download-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                     <polyline points="7 10 12 15 17 10"></polyline>
