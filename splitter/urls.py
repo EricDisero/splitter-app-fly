@@ -4,7 +4,7 @@ from . import views
 
 urlpatterns = [
     path("", views.HomePage.as_view(), name="home"),
-    path("setting/", views.SettingsPage.as_view(), name="setting"),
+    #path("setting/", views.SettingsPage.as_view(), name="setting"),
     path("split/", views.SplitFile.as_view(), name="split"),
     path("upload_audio/", views.UploadFile.as_view(), name="upload_audio"),
     path("validate_keygen/", views.ValidateKeygen.as_view(), name="validate_keygen"),

@@ -1,10 +1,10 @@
-app = "splitter-app"
-primary_region = "sea"  # Seattle (closest to Oregon)
-kill_signal = "SIGINT"
-kill_timeout = "5s"
+# fly.toml - Deployment config for mvsep-splitter on Fly.io
+
+app = "mvsep-splitter"
+primary_region = "sea"  # Seattle for proximity to Beam/MVSEP
 
 [build]
-dockerfile = "Dockerfile"
+  dockerfile = "Dockerfile"
 
 [env]
   PORT = "8080"
@@ -16,21 +16,20 @@ dockerfile = "Dockerfile"
   auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
+  max_machines_running = 2
   processes = ["app"]
+  concurrency = { type = "connections", hard_limit = 10, soft_limit = 5 }
 
 [http_service.http_options]
-  backend_timeout = "300s"  # 5 minutes
+  backend_timeout = "900s"  # allows long processing jobs
 
 [processes]
   app = "gunicorn splitter_django.wsgi:application --workers=2 --threads=2 --timeout=300"
 
+#[mounts]
+#  source = "splitter_volume"
+#  destination = "/data"
+
 [vm]
   size = "shared-cpu-1x"
-  memory = 2048
-
-#[deploy]
-  #release_command = "python manage.py migrate"
-
-[mounts]
-  source = "splitter_volume"
-  destination = "/data"
+  memory = 2048  # 2GB for heavier splits

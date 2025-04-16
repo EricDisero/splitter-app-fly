@@ -4,6 +4,102 @@
     <div class="error">{{ error_message }}</div>
 {% endif %}
 
+{% if split_section %}
+    <!-- Step 3: Splitting -->
+    <div class="step active" id="step-splitting">
+        <div class="input-label">Ready to process your file</div>
+        <div class="file-info">
+            <div class="file-info-header">
+                <div class="file-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 18V5l12-2v13"></path>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
+                </div>
+                <div class="file-name" id="filename-display">{{ file_name }}</div>
+            </div>
+        </div>
+
+        <form id="fileForm" hx-post="{% url 'split' %}" hx-target="#app-container" hx-swap="innerHTML">
+            {% csrf_token %}
+            <input type="hidden" id="file_name" name="file_name" value="{{ file_name }}">
+            <input type="hidden" id="s3_key" name="s3_key" value="{{ s3_key }}">
+            <button type="submit" class="btn" id="split-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                </svg>
+                Split Audio
+            </button>
+
+            <p class="mt-3 text-xs text-gray-400">This will process your track through multiple custom AI models to extract 7 separate stems. Processing will take a while. It'll be worth the wait.</p>
+        </form>
+
+        <script>
+            document.getElementById('fileForm').addEventListener('submit', function () {
+                console.log("Split form submitted");
+                // Show the processing animation
+                if (typeof showProcessingAnimation === 'function') {
+                    showProcessingAnimation();
+                }
+
+                // Disable the button to prevent multiple submissions
+                document.getElementById('split-btn').disabled = true;
+                document.getElementById('split-btn').innerHTML = 'Processing...';
+            });
+        </script>
+    </div>
+{% endif %}
+
+{% if download_section %}
+    <script>
+        console.log("Download section loaded");
+        // Hide the processing animation when the response shows download button
+        if (typeof hideProcessingAnimation === 'function') {
+            hideProcessingAnimation();
+        }
+    </script>
+
+    <!-- Step 4: Download -->
+    <div class="step active" id="step-download">
+        <div class="input-label">Splitting complete!</div>
+        <div class="file-info">
+            <div class="file-info-header">
+                <div class="success-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>
+                </div>
+                <div class="file-name" id="result-filename">{{ zip_file_name }}</div>
+            </div>
+            <div class="file-details">
+                Contains vocals, bass, EE, kick, snare, toms and hats (7 stems total)
+            </div>
+        </div>
+
+        <form id="download-form" method="post" action="{% url 'download' %}">
+            {% csrf_token %}
+            <input type="hidden" id="zip_file_name" name="base_name" value="{{ zip_file_name }}">
+            {% if stem_files_json %}
+            <input type="hidden" id="stem_files" name="stem_files" value="{{ stem_files_json }}">
+            {% endif %}
+            <button type="button" class="btn btn-green" id="download-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download Stems
+            </button>
+        </form>
+
+        <div class="mt-4 text-sm text-center text-gray-400">
+            Your browser will download 7 separate stems.
+        </div>
+    </div>
+{% endif %}
+
 {% if keygen_section %}
     <!-- Step 1: License Key -->
     <div class="step active" id="step-license">
@@ -47,6 +143,7 @@
             <button type="submit" id="uploadButton" style="display: none;"></button>
         </form>
         <script>
+            // Set up file dropzone
             function dragOverHandler(ev) {
                 ev.preventDefault();
                 document.getElementById('dropzone').classList.add('drag-over');
@@ -66,35 +163,43 @@
                 if (ev.dataTransfer.items) {
                     // Use DataTransferItemList interface to access the file(s)
                     const dt = new DataTransfer();
+                    let validFileFound = false;
+
                     [...ev.dataTransfer.items].forEach((item, i) => {
-                        // If dropped items aren't files, reject them
                         if (item.kind === "file") {
                             const file = item.getAsFile();
-                            console.log(`… file[${i}].name = ${file.name}`);
+                            console.log(`File dropped: ${file.name}`);
                             dt.items.add(file);
+                            validFileFound = true;
                         }
                     });
 
-                    // Set the files property of the file input element
-                    fileInput.files = dt.files;
-
-                    // Trigger the upload process
+                    if (validFileFound) {
+                        fileInput.files = dt.files;
+                        document.getElementById('uploadButton').click();
+                    }
+                } else if (ev.dataTransfer.files && ev.dataTransfer.files.length > 0) {
+                    fileInput.files = ev.dataTransfer.files;
                     document.getElementById('uploadButton').click();
-                } else {
-                    // Use DataTransfer interface to access the file(s)
-                    [...ev.dataTransfer.files].forEach((file, i) => {
-                        console.log(`… file[${i}].name = ${file.name}`);
-                    });
                 }
             }
 
+            // Set up click functionality for the dropzone
+//            document.getElementById('dropzone').addEventListener('click', function() {
+//                document.getElementById('fileInput').click();
+//            });
+
             // Trigger form submission when file is selected
-            document.getElementById('fileInput').addEventListener('change', function () {
-                document.getElementById('uploadButton').click();
+            document.getElementById('fileInput').addEventListener('change', function() {
+                if (this.files.length > 0) {
+                    console.log(`File selected: ${this.files[0].name}`);
+                    document.getElementById('uploadButton').click();
+                }
             });
 
             // Show processing animation when form is submitted
-            document.getElementById('fileUploadForm').addEventListener('submit', function () {
+            document.getElementById('fileUploadForm').addEventListener('submit', function() {
+                console.log("Upload form submitted");
                 // Show uploading animation
                 const uploadingDiv = document.createElement('div');
                 uploadingDiv.className = 'input-label';
@@ -103,87 +208,5 @@
                 document.getElementById('dropzone').appendChild(uploadingDiv);
             });
         </script>
-    </div>
-{% endif %}
-
-{% if split_section %}
-    <!-- Step 3: Splitting -->
-    <div class="step active" id="step-splitting">
-        <div class="input-label">Ready to process your file</div>
-        <div class="file-info">
-            <div class="file-info-header">
-                <div class="file-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M9 18V5l12-2v13"></path>
-                        <circle cx="6" cy="18" r="3"></circle>
-                        <circle cx="18" cy="16" r="3"></circle>
-                    </svg>
-                </div>
-                <div class="file-name" id="filename-display">{{ file_name }}</div>
-            </div>
-        </div>
-
-        <form id="fileForm" hx-post="{% url 'split' %}" hx-target="#app-container" hx-swap="innerHTML">
-            {% csrf_token %}
-            <input type="hidden" id="file_name" name="file_name" value="{{ file_name }}">
-            <button type="submit" class="btn" id="split-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
-                </svg>
-                Split Audio
-            </button>
-        </form>
-
-        <script>
-            document.getElementById('fileForm').addEventListener('submit', function () {
-                // Show the processing animation
-                if (typeof showProcessingAnimation === 'function') {
-                    showProcessingAnimation();
-                }
-            });
-        </script>
-    </div>
-{% endif %}
-
-{% if download_section %}
-    <script>
-        // Hide the processing animation when the response shows download button
-        if (typeof hideProcessingAnimation === 'function') {
-            hideProcessingAnimation();
-        }
-    </script>
-
-    <!-- Step 4: Download -->
-    <div class="step active" id="step-download">
-        <div class="input-label">Splitting complete!</div>
-        <div class="file-info">
-            <div class="file-info-header">
-                <div class="success-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                    </svg>
-                </div>
-                <div class="file-name" id="result-filename">{{ zip_file_name }}</div>
-            </div>
-            <div class="file-details">Contains drums, bass, vocal and EE tracks</div>
-        </div>
-
-        <!-- Change the button type to "button" -->
-        <form id="download-form" method="post" action="{% url 'download' %}">
-            {% csrf_token %}
-            <input type="hidden" id="zip_file_name" name="base_name" value="{{ zip_file_name }}">
-            {% if stem_files_json %}
-            <input type="hidden" id="stem_files" name="stem_files" value="{{ stem_files_json }}">
-            {% endif %}
-            <button type="button" class="btn btn-green" id="download-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-                Download Stems
-            </button>
-        </form>
     </div>
 {% endif %}
