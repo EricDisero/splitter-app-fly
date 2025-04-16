@@ -381,7 +381,10 @@ class MVSepProcessor:
 
     def _preprocess_input(self, file_path: str) -> str:
         """
-        Ensure input is 44.1kHz and apply -10dB gain to prevent clipping.
+        Preprocess input file to ensure compatibility:
+        1. Convert non-WAV formats to WAV
+        2. Ensure 44.1kHz sample rate
+        3. NO gain adjustments - preserve original levels exactly
 
         Args:
             file_path: Path to the input audio file
@@ -391,7 +394,61 @@ class MVSepProcessor:
         """
         logger.info(f"Preprocessing: {file_path}")
         try:
-            data, sr = sf.read(file_path)
+            # Get file extension
+            file_ext = os.path.splitext(file_path)[1].lower()
+
+            # Check if file is WAV
+            is_wav = file_ext == '.wav'
+
+            # For non-WAV files, we'll use a library that can handle different formats
+            if not is_wav:
+                logger.info(f"Converting {file_ext} to WAV format")
+                # We can use soundfile with additional libraries like pydub if needed
+                try:
+                    # First attempt: Try with soundfile directly
+                    data, sr = sf.read(file_path)
+                    logger.info(f"Loaded {file_ext} file using soundfile")
+                except Exception as sf_error:
+                    logger.warning(f"Soundfile couldn't load {file_ext} file: {sf_error}")
+
+                    # Second attempt: Try with pydub if available
+                    try:
+                        import pydub
+                        from pydub import AudioSegment
+
+                        # Load file with pydub
+                        logger.info(f"Trying to load with pydub")
+                        if file_ext == '.mp3':
+                            audio = AudioSegment.from_mp3(file_path)
+                        elif file_ext == '.flac':
+                            audio = AudioSegment.from_file(file_path, format="flac")
+                        elif file_ext == '.aif' or file_ext == '.aiff':
+                            audio = AudioSegment.from_file(file_path, format="aiff")
+                        else:
+                            audio = AudioSegment.from_file(file_path)
+
+                        logger.info(f"Successfully loaded audio with pydub")
+
+                        # Export as temporary WAV for further processing
+                        temp_wav = self.temp_dir / f"temp_converted{os.path.basename(file_path)}.wav"
+                        audio.export(temp_wav, format="wav")
+
+                        # Now load with soundfile
+                        data, sr = sf.read(temp_wav)
+                        logger.info(f"Converted to WAV using pydub")
+
+                    except ImportError:
+                        logger.error("Pydub not available for audio conversion")
+                        raise Exception(f"Cannot process {file_ext} file - pydub library not available")
+                    except Exception as pydub_error:
+                        logger.error(f"Pydub conversion failed: {pydub_error}")
+                        raise Exception(f"Failed to convert {file_ext} file to WAV: {pydub_error}")
+            else:
+                # For WAV files, load directly
+                data, sr = sf.read(file_path)
+                logger.info(f"Loaded WAV file: {sr}Hz")
+
+            # Ensure we have a target sample rate of 44.1kHz
             target_sr = 44100
 
             # Resample if needed
@@ -404,12 +461,10 @@ class MVSepProcessor:
             else:
                 logger.info("Sample rate already 44.1kHz")
 
-            # Apply gain reduction
-#            logger.info("Applying -10dB gain reduction")
-#            data *= 10 ** (-10 / 20)  # -10dB
+            # NO gain adjustment - preserving original levels exactly
 
             # Save preprocessed file
-            out_path = self.temp_dir / f"preprocessed_{Path(file_path).name}"
+            out_path = self.temp_dir / f"preprocessed_{Path(file_path).name}.wav"
             sf.write(out_path, data, target_sr, subtype='FLOAT')
             logger.info(f"Saved preprocessed file: {out_path}")
 

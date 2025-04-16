@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Add this after the FROM line
+RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
+
 # Don't write .pyc files and enable unbuffered logging
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

@@ -199,6 +199,13 @@ class SplitFile(TemplateView):
             except Exception as e:
                 logger.warning(f"Cleanup error (non-critical): {str(e)}")
 
+            # Delete original uploaded file from S3
+            try:
+                logger.info(f"Deleting original uploaded file from S3: {s3_key}")
+                s3_client.delete_object(Bucket=settings.S3_BUCKET_NAME, Key=s3_key)
+            except Exception as e:
+                logger.warning(f"Failed to delete uploaded file {s3_key}: {str(e)}")
+
             # Return download page
             logger.info(f"Rendering download page with {len(stem_files)} stems")
             return render(request, 'partials/file_upload_split.html', {
@@ -274,7 +281,7 @@ class DownloadFile(View):
                             'Key': s3_key,
                             'ResponseContentDisposition': f'attachment; filename="{file_name}"'
                         },
-                        ExpiresIn=3600  # 1 hour
+                        ExpiresIn=21600  # 6 hours
                     )
                     download_urls.append({
                         "url": url,
@@ -289,6 +296,9 @@ class DownloadFile(View):
                         "stem_type": stem_type,
                         "error": str(e)
                     })
+
+            # Schedule quick delayed cleanup in the background (1 minute)
+            self._schedule_delayed_cleanup(stem_files_json)
 
             # Return download URLs
             logger.info(f"Returning {len(download_urls)} download URLs")
@@ -305,6 +315,65 @@ class DownloadFile(View):
                 'status': 'error',
                 'message': str(e)
             }, status=500)
+
+    def _schedule_delayed_cleanup(self, stem_files_json):
+        """Schedule a background task to clean up files after a short delay"""
+        import threading
+        import time
+
+        def delayed_cleanup():
+            # Wait for 1 minute to ensure downloads have had time to start
+            time.sleep(45)  # 45 seconds
+
+            try:
+                logger.info("Starting quick delayed cleanup of S3 files (1-minute delay)")
+                stem_files = json.loads(stem_files_json)
+
+                # Get S3 client
+                s3_client = get_s3()
+                if not s3_client:
+                    logger.error("S3 client not available for cleanup")
+                    return
+
+                # Delete files from S3
+                deleted = []
+                failed = []
+
+                for item in stem_files:
+                    # Handle both dictionary and string formats
+                    if isinstance(item, dict):
+                        s3_key = item.get('s3_key')
+                    elif isinstance(item, str):
+                        s3_key = item
+                    else:
+                        logger.warning(f"Skipping invalid item type: {type(item)}")
+                        continue
+
+                    if not s3_key:
+                        continue
+
+                    try:
+                        logger.info(f"Deleting from S3: {s3_key}")
+                        s3_client.delete_object(
+                            Bucket=settings.S3_BUCKET_NAME,
+                            Key=s3_key
+                        )
+                        deleted.append(s3_key)
+                    except Exception as e:
+                        logger.error(f"Failed to delete {s3_key}: {str(e)}")
+                        failed.append({'key': s3_key, 'error': str(e)})
+
+                logger.info(f"Quick cleanup complete. Deleted: {len(deleted)}, Failed: {len(failed)}")
+
+            except Exception as e:
+                logger.error(f"Error in delayed cleanup: {str(e)}")
+                logger.error(traceback.format_exc())
+
+        # Start the cleanup task in a background thread
+        cleanup_thread = threading.Thread(target=delayed_cleanup)
+        cleanup_thread.daemon = True  # Allow the app to exit even if thread is running
+        cleanup_thread.start()
+        logger.info("Scheduled quick 45 second delayed cleanup task")
 
 
 @method_decorator(csrf_exempt, name='dispatch')

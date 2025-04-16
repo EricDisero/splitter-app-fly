@@ -1,4 +1,4 @@
-// Improved download management script with better reliability
+// Improved download management script without client-side cleanup
 (function() {
     // Counter for download retries
     const MAX_RETRIES = 3;
@@ -108,35 +108,37 @@
             return downloadInfo;
         })
         .then((downloadInfo) => {
-            // Cleanup will be triggered only after all downloads are initiated
+            // Update button with success state
             button.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
-                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
                 </svg>
-                Finishing up...
+                Downloads Complete
             `;
 
-            return new Promise((resolve) => {
-                // Give time for browser to process downloads, 10 seconds
-                setTimeout(() => {
-                    resolve(downloadInfo);
-                }, 10000);
-            });
-        })
-        .then((downloadInfo) => {
-            // Cleanup S3 files after downloads
-            return cleanupS3Files(stemData)
-                .then(cleanupData => ({...downloadInfo, cleanup: cleanupData}));
-        })
-        .then((finalResults) => {
-            // Show success message with details
-            const successMsg = `All ${finalResults.totalDownloads} stems have been downloaded successfully.`;
-            alert(successMsg);
+            // Show success message
+            const successMsg = `All ${downloadInfo.totalDownloads} stems have been downloaded.`;
 
-            // Redirect to home page after a short delay
+            // Add a message below the button
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'mt-3 text-sm text-center text-gray-400';
+            messageDiv.textContent = successMsg;
+            button.parentNode.appendChild(messageDiv);
+
+            // Add a Return Home link after a delay
             setTimeout(() => {
-                window.location.href = '/';
-            }, 1500);
+                const homeLink = document.createElement('a');
+                homeLink.className = 'btn mt-3';
+                homeLink.innerHTML = 'Return to Home';
+                homeLink.href = '/';
+                homeLink.style.display = 'inline-block';
+                homeLink.style.textDecoration = 'none';
+
+                button.parentNode.appendChild(homeLink);
+            }, 2000);
+
+            return downloadInfo;
         })
         .catch(error => {
             console.error('Download process error:', error);
@@ -145,7 +147,17 @@
             retryCount++;
 
             // Show retry message
-            alert(`Download encountered an issue. Retrying (${retryCount}/${MAX_RETRIES})...`);
+            const errorMsg = `Download encountered an issue. Retrying (${retryCount}/${MAX_RETRIES})...`;
+            console.warn(errorMsg);
+
+            // Update button to show retry state
+            button.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M23 4v6h-6"></path>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+                Retrying...
+            `;
 
             // Retry the download process after a delay
             setTimeout(() => {
@@ -265,36 +277,6 @@
                     performDownload();
                 }
             });
-        });
-    }
-
-    // Improved cleanup S3 files function with better error handling
-    function cleanupS3Files(stemFilesJson) {
-        return fetch('/cleanup_s3/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
-            },
-            body: JSON.stringify({ stem_files: stemFilesJson }),
-            // Increased timeout for cleanup
-            timeout: 30000 // 30 seconds
-        })
-        .then(response => {
-            if (!response.ok) {
-                console.warn(`S3 cleanup returned status ${response.status}. Continuing anyway.`);
-                return { status: 'warning', message: 'Cleanup may not have completed successfully' };
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('S3 Cleanup response:', data);
-            return data;
-        })
-        .catch(error => {
-            console.error('S3 Cleanup failed:', error);
-            // Don't throw the error, as downloads have already completed
-            return { status: 'error', message: 'Cleanup failed but downloads completed' };
         });
     }
 
