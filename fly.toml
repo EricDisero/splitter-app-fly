@@ -18,7 +18,7 @@ primary_region = "sea"  # Seattle for proximity to Beam/MVSEP
   min_machines_running = 0
   max_machines_running = 2
   processes = ["app"]
-  concurrency = { type = "connections", hard_limit = 10, soft_limit = 5 }
+  concurrency = { type = "connections", hard_limit = 5, soft_limit = 3 }
 
 [http_service.http_options]
   backend_timeout = "900s"  # allows long processing jobs
