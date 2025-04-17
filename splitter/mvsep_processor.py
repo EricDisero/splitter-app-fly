@@ -1,6 +1,7 @@
 """
-MVSep Processing Service - Handles the cascade of audio processing steps using the MVSep API.
-This service coordinates the multi-step process for extracting vocal, drums, bass, and individual drum stems.
+MVSep Processing Service - Handles the parallel processing of audio using the MVSep API.
+This service coordinates concurrent API calls for extracting vocals, drums, and bass stems
+with improved error handling and reliability features.
 """
 
 import os
@@ -8,6 +9,8 @@ import time
 import logging
 import requests
 import json
+import random
+import concurrent.futures
 from typing import Dict, List, Optional, Tuple, Any
 import soundfile as sf
 import numpy as np
@@ -31,6 +34,13 @@ class MVSepProcessor:
     # Output format
     OUTPUT_WAV = 1
 
+    # Retry configuration
+    MAX_RETRIES = 3
+    BASE_RETRY_DELAY = 2  # seconds
+
+    # Concurrency settings
+    CONCURRENT_DELAY = 2  # seconds between concurrent API calls
+
     def __init__(self, api_token: str, temp_dir: Optional[str] = None):
         self.api_token = api_token
         self.temp_dir = Path(temp_dir) if temp_dir else Path(tempfile.mkdtemp())
@@ -39,7 +49,7 @@ class MVSepProcessor:
 
     def process_file(self, file_path: str, output_dir: str) -> Dict[str, str]:
         """
-        Process an audio file through the cascaded stem extraction pipeline.
+        Process an audio file through the parallel stem extraction pipeline.
 
         Args:
             file_path: Path to the input audio file
@@ -59,40 +69,172 @@ class MVSepProcessor:
             # Step 1: Preprocess the input file
             preprocessed_path = self._preprocess_input(file_path)
 
-            # Step 2: Extract vocals with BS Roformer
-            logger.info("Step 1: Extracting vocals with BS Roformer")
-            vocal_path, instrumental_path = self._extract_vocals(preprocessed_path)
+            # Step 2: Run all separation jobs concurrently with improved error handling
+            logger.info("Starting separation jobs in sequence with staggered timing")
+            separation_results = self._run_concurrent_separations(preprocessed_path)
 
-            # Step 3: Extract drums from instrumental
-            logger.info("Step 2: Extracting drums from instrumental")
-            drums_path, no_drums_path = self._extract_drums(instrumental_path)
+            # Check if we have minimal required components for processing
+            if 'vocals' not in separation_results or 'vocals' in separation_results and 'vocal_path' not in separation_results['vocals']:
+                raise Exception("Vocal extraction failed, cannot continue processing")
 
-            # Step 4: Extract bass from no_drums
-            logger.info("Step 3: Extracting bass from no_drums")
-            bass_path, no_bass_path = self._extract_bass(no_drums_path)
+            # Extract all the paths from the results
+            vocal_path = separation_results['vocals']['vocal_path']
+            instrumental_path = separation_results['vocals'].get('instrumental_path', preprocessed_path)
 
-            # Step 5: Extract individual drum components
-            logger.info("Step 4: Extracting individual drum components")
-            drum_stems = self._extract_drum_components(drums_path)
+            # For drum stems, we have a fallback mechanism
+            drum_components = separation_results.get('drum_components', {})
+            drums_path = None
+            no_drums_path = None
 
-            # Step 6: Generate hats through phase cancellation
-            logger.info("Step 5: Generating hats through phase cancellation")
-            hats_path = self._generate_hats(drums_path, drum_stems)
+            if 'drums' in separation_results and 'drums_path' in separation_results['drums']:
+                drums_path = separation_results['drums']['drums_path']
+                no_drums_path = separation_results['drums'].get('other_path', instrumental_path)
 
-            # Step 7: Generate EE (everything else) through phase cancellation
-            logger.info("Step 6: Generating EE through phase cancellation")
+            # For bass extraction
+            bass_path = None
+            if 'bass' in separation_results and 'bass_path' in separation_results['bass']:
+                bass_path = separation_results['bass']['bass_path']
+
+            # If drum components are missing but we have drums path, try to extract them
+            if not drum_components and drums_path:
+                logger.info("Attempting to extract drum components from drums path as fallback")
+                try:
+                    drum_components = self._extract_drum_components_from_drums(drums_path)
+                except Exception as e:
+                    logger.warning(f"Fallback drum component extraction failed: {str(e)}")
+                    # We'll handle missing stems later
+
+            # If we still don't have drums or drum components, try direct extraction from the instrumental
+            if (not drums_path or not drum_components) and instrumental_path:
+                logger.info("Attempting direct drum extraction from instrumental as fallback")
+                try:
+                    # Try to extract drums from instrumental
+                    fallback_results = self._extract_drums_fallback(instrumental_path)
+
+                    # Update drums path if we got it
+                    if 'drums_path' in fallback_results:
+                        drums_path = fallback_results['drums_path']
+                        no_drums_path = fallback_results.get('other_path', instrumental_path)
+
+                    # Update drum components if we got them
+                    if 'drum_components' in fallback_results:
+                        drum_components = fallback_results['drum_components']
+                except Exception as e:
+                    logger.warning(f"Fallback drum extraction failed: {str(e)}")
+
+            # If bass is missing, try direct extraction from no_drums or instrumental
+            if not bass_path and (no_drums_path or instrumental_path):
+                logger.info("Attempting bass extraction as fallback")
+                try:
+                    source_path = no_drums_path if no_drums_path else instrumental_path
+                    bass_results = self._extract_bass_fallback(source_path)
+
+                    if 'bass_path' in bass_results:
+                        bass_path = bass_results['bass_path']
+                except Exception as e:
+                    logger.warning(f"Fallback bass extraction failed: {str(e)}")
+
+            # If we still don't have the minimal requirements to continue, raise an error
+            if not vocal_path or not drums_path or not bass_path or len(drum_components) < 3:
+                missing = []
+                if not vocal_path:
+                    missing.append("vocals")
+                if not drums_path:
+                    missing.append("drums")
+                if not bass_path:
+                    missing.append("bass")
+                if len(drum_components) < 3:
+                    missing.append(f"drum components (found {len(drum_components)} of 3)")
+
+                raise Exception(f"Could not extract all required stems: missing {', '.join(missing)}")
+
+            # Step 3: Generate hats through phase cancellation
+            logger.info("Generating hats through phase cancellation")
+            hats_path = self._generate_hats(drums_path, drum_components)
+
+            # Step 4: Generate EE (everything else) through phase cancellation
+            logger.info("Generating EE through phase cancellation")
             ee_path = self._generate_ee(preprocessed_path, vocal_path, drums_path, bass_path)
 
-            # Step 8: Prepare final output files with proper naming
-            logger.info("Step 7: Preparing final output files")
+            # Step 5: Prepare final output files with proper naming
+            logger.info("Preparing final output files")
             return self._prepare_final_output(
                 base_name, output_dir, vocal_path, drums_path, bass_path,
-                drum_stems, hats_path, ee_path
+                drum_components, hats_path, ee_path
             )
 
         except Exception as e:
-            logger.error(f"Error generating EE: {str(e)}")
+            logger.error(f"Error processing file: {str(e)}")
             raise
+
+    def _run_concurrent_separations(self, file_path: str) -> Dict[str, Any]:
+        """
+        Run all separation jobs with staggered starts without waiting for vocals to complete.
+        All API calls will be made with a short delay between them to avoid overwhelming the server.
+
+        Args:
+            file_path: Path to the preprocessed audio file
+
+        Returns:
+            Dictionary containing all the separation results
+        """
+        # Initialize an empty results dictionary
+        results = {}
+        futures = {}
+
+        # Use a thread pool to manage the jobs
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            # Start all jobs with staggered timing
+
+            # First job: vocals extraction
+            logger.info("Starting vocals extraction")
+            futures['vocals'] = executor.submit(
+                self._extract_vocals, file_path
+            )
+
+            # Small delay to avoid overwhelming the server
+            time.sleep(self.CONCURRENT_DELAY)
+
+            # Second job: drum component extraction
+            logger.info("Starting drum components extraction")
+            futures['drum_components'] = executor.submit(
+                self._extract_drum_components_direct_with_retry, file_path
+            )
+
+            # Another small delay
+            time.sleep(self.CONCURRENT_DELAY)
+
+            # Third job: bass extraction
+            logger.info("Starting bass extraction")
+            futures['bass'] = executor.submit(
+                self._extract_bass_direct_with_retry, file_path
+            )
+
+            # Wait for all futures to complete
+            logger.info("Waiting for all separation jobs to complete...")
+
+            # Process results as they complete, capturing any exceptions
+            for job_name, future in futures.items():
+                try:
+                    job_result = future.result()
+                    results[job_name] = job_result
+
+                    # If we have drums path in the drum components, add it to results
+                    if job_name == 'drum_components' and 'drums_path' in job_result:
+                        results['drums'] = {
+                            'drums_path': job_result['drums_path'],
+                            'other_path': None  # We'll set this later if we have instrumental
+                        }
+                except Exception as e:
+                    logger.error(f"{job_name} extraction failed: {str(e)}")
+                    # We'll handle missing components in the main processing pipeline
+
+            # If we have both drums and vocals results, set the other_path for drums
+            if 'drums' in results and 'vocals' in results and 'instrumental_path' in results['vocals']:
+                results['drums']['other_path'] = results['vocals']['instrumental_path']
+
+        logger.info(f"Concurrent separation completed with results for: {', '.join(results.keys())}")
+        return results
 
     def _prepare_final_output(
             self,
@@ -179,6 +321,46 @@ class MVSepProcessor:
             logger.error(f"Error preparing final output: {str(e)}")
             raise
 
+    def _start_separation_job_with_retry(
+            self,
+            file_path: str,
+            sep_type: int,
+            add_opt1: Optional[str] = None,
+            add_opt2: Optional[str] = None,
+            add_opt3: Optional[str] = None
+    ) -> str:
+        """
+        Start a separation job on MVSep API with retry logic.
+
+        Args:
+            file_path: Path to the audio file
+            sep_type: Separation type ID
+            add_opt1: Optional parameter 1
+            add_opt2: Optional parameter 2
+            add_opt3: Optional parameter 3
+
+        Returns:
+            Separation hash for tracking the job
+        """
+        retries = 0
+        last_exception = None
+
+        while retries < self.MAX_RETRIES:
+            try:
+                return self._start_separation_job(file_path, sep_type, add_opt1, add_opt2, add_opt3)
+            except Exception as e:
+                last_exception = e
+                retries += 1
+
+                # Use exponential backoff with jitter
+                delay = self.BASE_RETRY_DELAY * (2 ** (retries - 1)) + random.uniform(0, 1)
+                logger.warning(f"API request failed (attempt {retries}/{self.MAX_RETRIES}), retrying in {delay:.2f}s: {str(e)}")
+                time.sleep(delay)
+
+        # If we've exhausted retries, raise the last exception
+        logger.error(f"Failed to start separation job after {self.MAX_RETRIES} attempts")
+        raise last_exception
+
     def _start_separation_job(
             self,
             file_path: str,
@@ -210,7 +392,7 @@ class MVSepProcessor:
                 'add_opt1': '0',   # standard output
                 'add_opt2': '6',   # best quality model
                 'output_format': '1',  # wav
-                'is_demo': '0'     # <- THIS is the fix
+                'is_demo': '0'
             }
         else:
             # For other sep_types, build parameters dynamically
@@ -244,14 +426,15 @@ class MVSepProcessor:
             response = requests.post(
                 self.MVSEP_API_CREATE_URL,
                 data=form_data,
-                files=files
+                files=files,
+                timeout=30  # Add timeout to avoid hanging connections
             )
 
             # Check response
             logger.info(f"📬 MVSEP response: {response.status_code} — {response.text[:200]}...")
 
             if response.status_code != 200:
-                logger.error(f"🔥 MVSEP API ERROR: {response.status_code} — {response.text}")
+                logger.error(f"🔥 MVSEP API ERROR: {response.status_code} — {response.text[:500]}")
                 raise Exception(f"MVSep API error: {response.status_code}")
 
             response_data = response.json()
@@ -294,11 +477,12 @@ class MVSepProcessor:
         while attempts < max_attempts:
             try:
                 response = requests.get(
-                    f"{self.MVSEP_API_GET_URL}?hash={separation_hash}"
+                    f"{self.MVSEP_API_GET_URL}?hash={separation_hash}",
+                    timeout=15  # Add timeout to avoid hanging
                 )
 
                 if response.status_code != 200:
-                    logger.error(f"MVSep API error: {response.status_code} - {response.text}")
+                    logger.error(f"MVSep API error: {response.status_code} - {response.text[:500]}")
                     raise Exception(f"MVSep API error: {response.status_code}")
 
                 response_data = response.json()
@@ -347,10 +531,10 @@ class MVSepProcessor:
         logger.info(f"⬇️ Downloading from {url} → {save_path}")
 
         try:
-            response = requests.get(url, stream=True)
+            response = requests.get(url, stream=True, timeout=60)  # Longer timeout for downloads
 
             if response.status_code != 200:
-                logger.error(f"Download error: {response.status_code} - {response.text}")
+                logger.error(f"Download error: {response.status_code} - {response.text[:500]}")
                 raise Exception(f"Download error: {response.status_code}")
 
             with open(save_path, 'wb') as f:
@@ -375,7 +559,6 @@ class MVSepProcessor:
             logger.info("Cleanup complete")
         except Exception as e:
             logger.warning(f"Error during cleanup: {str(e)}")
-
             logger.error(f"Error cleaning temp dir {self.temp_dir}: {str(e)}")
             raise
 
@@ -474,20 +657,20 @@ class MVSepProcessor:
             logger.error(f"Error preprocessing file: {str(e)}")
             raise
 
-    def _extract_vocals(self, file_path: str) -> Tuple[str, str]:
+    def _extract_vocals(self, file_path: str) -> Dict[str, str]:
         """
-        Extract vocals from the source file using BS Roformer.
+        Extract vocals from the source file using BS Roformer with retries.
 
         Args:
             file_path: Path to the audio file
 
         Returns:
-            Tuple of (vocals_path, instrumental_path)
+            Dictionary with vocal_path and instrumental_path
         """
         logger.info(f"Extracting vocals from: {file_path}")
 
-        # Start the separation job
-        separation_hash = self._start_separation_job(
+        # Start the separation job with retries
+        separation_hash = self._start_separation_job_with_retry(
             file_path,
             self.SEP_BS_ROFORMER,
             add_opt1="29"  # ver 2024.08 (SDR vocals: 11.31, SDR instrum: 17.62)
@@ -522,226 +705,80 @@ class MVSepProcessor:
                 # Log successful download
                 if vocal_path and instrumental_path:
                     logger.info("Successfully downloaded vocals and instrumental using positional assumption")
-                    return vocal_path, instrumental_path
+                    return {"vocal_path": vocal_path, "instrumental_path": instrumental_path}
 
-        # If positional assumption failed or wasn't applicable, try pattern matching
-        vocal_path = None
-        instrumental_path = None
-
-        # Check each file for identifying information
-        for file_info in files_info:
-            url = file_info.get('url')
-            if not url:
-                continue
-
-            # Check filename first
-            filename = file_info.get('filename', '').lower()
-            file_type = file_info.get('type', '').lower()
-
-            # Extract name from URL if filename is empty
-            if not filename and url:
-                # Try to extract filename from URL
-                url_parts = url.split('/')
-                if url_parts:
-                    filename = url_parts[-1].lower()
-
-            # Try to identify file type from filename or other properties
-            is_vocal = False
-            is_instrumental = False
-
-            # Check file_type if available
-            if file_type:
-                is_vocal = 'vocal' in file_type or 'voc' in file_type
-                is_instrumental = 'instrum' in file_type or 'accomp' in file_type or 'other' in file_type
-
-            # Check filename patterns
-            if not (is_vocal or is_instrumental) and filename:
-                is_vocal = 'vocal' in filename or 'voc' in filename or '_voc_' in filename
-                is_instrumental = ('instrum' in filename or 'accomp' in filename or
-                                'other' in filename or '_other' in filename)
-
-            # Use URL as fallback
-            if not (is_vocal or is_instrumental) and url:
-                is_vocal = 'vocal' in url or 'voc' in url or '_voc_' in url
-                is_instrumental = ('instrum' in url or 'accomp' in url or
-                                'other' in url or '_other' in url)
-
-            # Download the identified files
-            if is_vocal and not vocal_path:
-                vocal_path = self._download_file(url, self.temp_dir / 'vocals.wav')
-                logger.info(f"Found vocals file: url={url[:50]}...")
-
-            elif is_instrumental and not instrumental_path:
-                instrumental_path = self._download_file(url, self.temp_dir / 'instrumental.wav')
-                logger.info(f"Found instrumental file: url={url[:50]}...")
-
-        # If we couldn't find the expected files, log detailed info and raise exception
-        if not vocal_path or not instrumental_path:
-            missing = []
-            if not vocal_path:
-                missing.append("vocals")
-            if not instrumental_path:
-                missing.append("instrumental")
-
-            # Log more details
-            logger.error(f"Missing output files: {', '.join(missing)}")
-            file_details = []
-            for f in files_info:
-                details = {}
-                for key in ['url', 'filename', 'type']:
-                    if key in f:
-                        details[key] = f[key]
-                file_details.append(details)
-            logger.error(f"Available files: {file_details}")
-
-            raise Exception(f"Failed to extract vocals: output files not found ({', '.join(missing)} missing)")
-
-        return vocal_path, instrumental_path
-
-    def _extract_drums(self, instrumental_path: str) -> Tuple[str, str]:
+    def _extract_bass_direct_with_retry(self, file_path: str) -> Dict[str, str]:
         """
-        Extract drums from the instrumental file.
+        Extract bass directly from the source file with retry logic.
 
         Args:
-            instrumental_path: Path to the instrumental audio file
+            file_path: Path to the audio file
 
         Returns:
-            Tuple of (drums_path, no_drums_path)
+            Dictionary with bass_path and other_path
         """
-        logger.info(f"Extracting drums from: {instrumental_path}")
+        logger.info(f"Extracting bass directly from: {file_path}")
 
-        # Start the separation job
-        separation_hash = self._start_separation_job(
-            instrumental_path,
-            self.SEP_DRUMS,
-            add_opt1="4",  # Mel + SCNet XL (SDR drums: 13.78)
-            add_opt2="0"   # Extract directly from mixture
-        )
+        # Use retry logic for API call
+        try:
+            # Start the separation job with retries
+            separation_hash = self._start_separation_job_with_retry(
+                file_path,
+                self.SEP_BASS,
+                add_opt1="3",  # BS + HTDemucs + SCNet (SDR bass: 14.07)
+                add_opt2="0"   # Extract directly from mixture
+            )
 
-        # Wait for job completion
-        result_data = self._wait_for_completion(separation_hash)
+            # Wait for job completion
+            result_data = self._wait_for_completion(separation_hash)
 
-        # Download the separated files
-        files_info = result_data.get('files', [])
+            # Process results
+            return self._process_bass_results(result_data, file_path)
+        except Exception as e:
+            logger.error(f"Bass extraction failed: {str(e)}")
+            raise
 
-        # Log all files found in the response
-        logger.info(f"API returned {len(files_info)} files for drums separation")
-        for i, file_info in enumerate(files_info):
-            filename = file_info.get('filename', '')
-            url = file_info.get('url', '')
-            logger.info(f"File {i+1}: filename='{filename}', url={url[:50] if url else 'None'}...")
-            # Log additional file data that might help identify the files
-            if 'type' in file_info:
-                logger.info(f"File {i+1} type: {file_info['type']}")
-
-        # If we have exactly 2 files in a drums/no_drums separation, and no filenames,
-        # we can assume the first file is drums and the second is other
-        if len(files_info) == 2 and all(not file_info.get('filename') for file_info in files_info):
-            logger.info("Using positional assumption: first file is drums, second is other")
-
-            # Try to get URLs
-            if files_info[0].get('url') and files_info[1].get('url'):
-                drums_path = self._download_file(files_info[0]['url'], self.temp_dir / 'drums.wav')
-                other_path = self._download_file(files_info[1]['url'], self.temp_dir / 'drums_other.wav')
-
-                # Log successful download
-                if drums_path and other_path:
-                    logger.info("Successfully downloaded drums and other using positional assumption")
-                    return drums_path, other_path
-
-        # Pattern matching approach
-        drums_path = None
-        other_path = None
-
-        # Check each file for identifying information
-        for file_info in files_info:
-            url = file_info.get('url')
-            if not url:
-                continue
-
-            # Check filename first
-            filename = file_info.get('filename', '').lower()
-            file_type = file_info.get('type', '').lower()
-
-            # Extract name from URL if filename is empty
-            if not filename and url:
-                url_parts = url.split('/')
-                if url_parts:
-                    filename = url_parts[-1].lower()
-
-            # Try to identify file type
-            is_drums = False
-            is_other = False
-
-            # Check file_type if available
-            if file_type:
-                is_drums = 'drum' in file_type
-                is_other = 'other' in file_type
-
-            # Check filename patterns
-            if not (is_drums or is_other) and filename:
-                is_drums = 'drum' in filename
-                is_other = 'other' in filename
-
-            # Use URL as fallback
-            if not (is_drums or is_other) and url:
-                is_drums = 'drum' in url
-                is_other = 'other' in url
-
-            # Download the identified files
-            if is_drums and not drums_path:
-                drums_path = self._download_file(url, self.temp_dir / 'drums.wav')
-                logger.info(f"Found drums file: url={url[:50]}...")
-
-            elif is_other and not other_path:
-                other_path = self._download_file(url, self.temp_dir / 'drums_other.wav')
-                logger.info(f"Found drums_other file: url={url[:50]}...")
-
-        # If we couldn't find the expected files, try the simplest approach - just download both
-        if not drums_path or not other_path:
-            if len(files_info) == 2:
-                logger.info("Falling back to simple download of both files for drums and other")
-                if not drums_path and files_info[0].get('url'):
-                    drums_path = self._download_file(files_info[0]['url'], self.temp_dir / 'drums.wav')
-                if not other_path and files_info[1].get('url'):
-                    other_path = self._download_file(files_info[1]['url'], self.temp_dir / 'drums_other.wav')
-
-        # If still missing files, raise exception
-        if not drums_path or not other_path:
-            missing = []
-            if not drums_path:
-                missing.append("drums")
-            if not other_path:
-                missing.append("no_drums")
-
-            logger.error(f"Missing drum separation output files: {', '.join(missing)}")
-            raise Exception(f"Failed to extract drums: output files not found")
-
-        return drums_path, other_path
-
-    def _extract_bass(self, no_drums_path: str) -> Tuple[str, str]:
+    def _extract_bass_fallback(self, file_path: str) -> Dict[str, str]:
         """
-        Extract bass from the no_drums file.
+        Fallback method to extract bass, used when the concurrent method fails.
 
         Args:
-            no_drums_path: Path to audio without drums
+            file_path: Path to the audio file
 
         Returns:
-            Tuple of (bass_path, no_bass_path)
+            Dictionary with bass_path
         """
-        logger.info(f"Extracting bass from: {no_drums_path}")
+        logger.info(f"Attempting bass extraction fallback from: {file_path}")
 
-        # Start the separation job
-        separation_hash = self._start_separation_job(
-            no_drums_path,
-            self.SEP_BASS,
-            add_opt1="3",  # BS + HTDemucs + SCNet (SDR bass: 14.07)
-            add_opt2="0"   # Extract directly from mixture
-        )
+        try:
+            # Start the separation job with retries
+            separation_hash = self._start_separation_job_with_retry(
+                file_path,
+                self.SEP_BASS,
+                add_opt1="3",  # BS + HTDemucs + SCNet (SDR bass: 14.07)
+                add_opt2="0"   # Extract directly from mixture
+            )
 
-        # Wait for job completion
-        result_data = self._wait_for_completion(separation_hash)
+            # Wait for job completion
+            result_data = self._wait_for_completion(separation_hash)
 
+            # Process results
+            return self._process_bass_results(result_data, file_path)
+        except Exception as e:
+            logger.error(f"Bass fallback extraction failed: {str(e)}")
+            raise
+
+    def _process_bass_results(self, result_data: Dict[str, Any], file_path: str) -> Dict[str, str]:
+        """
+        Process bass extraction results.
+
+        Args:
+            result_data: Results from MVSep API
+            file_path: Original file path
+
+        Returns:
+            Dictionary with bass_path and other_path
+        """
         # Download the separated files
         files_info = result_data.get('files', [])
 
@@ -768,7 +805,7 @@ class MVSepProcessor:
                 # Log successful download
                 if bass_path and other_path:
                     logger.info("Successfully downloaded bass and other using positional assumption")
-                    return bass_path, other_path
+                    return {"bass_path": bass_path, "other_path": other_path}
 
         # Pattern matching approach
         bass_path = None
@@ -824,19 +861,164 @@ class MVSepProcessor:
                 logger.info("Falling back to simple download of both files for bass and other")
                 if not bass_path and files_info[0].get('url'):
                     bass_path = self._download_file(files_info[0]['url'], self.temp_dir / 'bass.wav')
-                if not other_path and files_info[1].get('url'):
+                if not other_path and len(files_info) > 1 and files_info[1].get('url'):
                     other_path = self._download_file(files_info[1]['url'], self.temp_dir / 'bass_other.wav')
 
         # For bass, we only need the bass file, the other file is optional
         if not bass_path:
             logger.error("Missing bass output file")
-            raise Exception(f"Failed to extract bass: output file not found")
+            raise Exception("Failed to extract bass: output file not found")
 
-        return bass_path, other_path or no_drums_path
+        return {"bass_path": bass_path, "other_path": other_path or file_path}
 
-    def _extract_drum_components(self, drums_path: str) -> Dict[str, str]:
+    def _extract_drum_components_direct_with_retry(self, file_path: str) -> Dict[str, str]:
         """
-        Extract individual drum components from the drums file.
+        Extract drum components directly from the source file with retry logic,
+        including automatic drum extraction as a first step.
+
+        Args:
+            file_path: Path to the audio file
+
+        Returns:
+            Dictionary with paths to individual drum component files,
+            and also includes the full drums path
+        """
+        logger.info(f"Extracting drum components directly from: {file_path}")
+
+        try:
+            # Start the separation job with retries
+            separation_hash = self._start_separation_job_with_retry(
+                file_path,
+                self.SEP_DRUMSEP,
+                add_opt1="7",  # DrumSep MelBand Roformer (6 stems)
+                add_opt2="0"   # Apply Drums model before (extracts drums automatically)
+            )
+
+            # Wait for job completion
+            result_data = self._wait_for_completion(separation_hash)
+
+            # Process results
+            return self._process_drum_component_results(result_data)
+        except Exception as e:
+            logger.error(f"Drum components extraction failed: {str(e)}")
+            raise
+
+    def _extract_drums_fallback(self, file_path: str) -> Dict[str, Any]:
+        """
+        Fallback method to extract drums when the concurrent method fails.
+
+        Args:
+            file_path: Path to the audio file
+
+        Returns:
+            Dictionary with drums_path and optionally drum_components
+        """
+        logger.info(f"Attempting drums extraction fallback from: {file_path}")
+
+        try:
+            # First try to extract just drums (faster, simpler)
+            separation_hash = self._start_separation_job_with_retry(
+                file_path,
+                self.SEP_DRUMS,
+                add_opt1="4",  # Mel + SCNet XL (SDR drums: 13.78)
+                add_opt2="0"   # Extract directly from mixture
+            )
+
+            # Wait for completion
+            result_data = self._wait_for_completion(separation_hash)
+
+            # Download drums and process results
+            drums_path, other_path = self._process_drums_results(result_data)
+
+            results = {
+                'drums_path': drums_path,
+                'other_path': other_path
+            }
+
+            # If we have drums, try to extract components in a second step
+            if drums_path:
+                try:
+                    drum_components = self._extract_drum_components_from_drums(drums_path)
+                    results['drum_components'] = drum_components
+                except Exception as e:
+                    logger.warning(f"Failed to extract drum components from drums: {str(e)}")
+
+            return results
+        except Exception as e:
+            logger.error(f"Drums fallback extraction failed: {str(e)}")
+            raise
+
+    def _process_drums_results(self, result_data: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+        """
+        Process plain drums extraction results.
+
+        Args:
+            result_data: Results from MVSep API
+
+        Returns:
+            Tuple of (drums_path, other_path)
+        """
+        files_info = result_data.get('files', [])
+
+        # Log all files found in the response
+        logger.info(f"API returned {len(files_info)} files for drums extraction")
+
+        # If we have exactly 2 files, assume first is drums, second is other
+        if len(files_info) == 2 and all(files_info[i].get('url') for i in range(2)):
+            drums_path = self._download_file(files_info[0]['url'], self.temp_dir / 'drums.wav')
+            other_path = self._download_file(files_info[1]['url'], self.temp_dir / 'drums_other.wav')
+            return drums_path, other_path
+
+        # Try to identify drums file
+        drums_path = None
+        other_path = None
+
+        for file_info in files_info:
+            url = file_info.get('url')
+            if not url:
+                continue
+
+            file_type = file_info.get('type', '').lower()
+            filename = file_info.get('filename', '').lower()
+
+            # Try to identify by type or name
+            is_drums = False
+            is_other = False
+
+            if file_type:
+                is_drums = 'drum' in file_type and not any(x in file_type for x in ['kick', 'snare', 'tom'])
+                is_other = 'other' in file_type
+
+            if not (is_drums or is_other) and filename:
+                is_drums = 'drum' in filename and not any(x in filename for x in ['kick', 'snare', 'tom'])
+                is_other = 'other' in filename
+
+            if not (is_drums or is_other) and url:
+                is_drums = 'drum' in url and not any(x in url for x in ['kick', 'snare', 'tom'])
+                is_other = 'other' in url
+
+            # Download identified files
+            if is_drums and not drums_path:
+                drums_path = self._download_file(url, self.temp_dir / 'drums.wav')
+            elif is_other and not other_path:
+                other_path = self._download_file(url, self.temp_dir / 'drums_other.wav')
+
+        # If we still don't have drums, try first file
+        if not drums_path and files_info and files_info[0].get('url'):
+            drums_path = self._download_file(files_info[0]['url'], self.temp_dir / 'drums.wav')
+
+            # If there's a second file, download as other
+            if len(files_info) > 1 and files_info[1].get('url'):
+                other_path = self._download_file(files_info[1]['url'], self.temp_dir / 'drums_other.wav')
+
+        if not drums_path:
+            raise Exception("Failed to extract drums file")
+
+        return drums_path, other_path
+
+    def _extract_drum_components_from_drums(self, drums_path: str) -> Dict[str, str]:
+        """
+        Extract individual drum components from an already separated drums file.
 
         Args:
             drums_path: Path to the drums audio file
@@ -844,19 +1026,41 @@ class MVSepProcessor:
         Returns:
             Dictionary with paths to individual drum component files
         """
-        logger.info(f"Extracting drum components from: {drums_path}")
+        logger.info(f"Extracting drum components from drums: {drums_path}")
 
-        # Start the separation job
-        separation_hash = self._start_separation_job(
-            drums_path,
-            self.SEP_DRUMSEP,
-            add_opt1="6",  # DrumSep MelBand Roformer (4 stems)
-            add_opt2="1"   # Use as is (audio must contain drums only)
-        )
+        try:
+            # Start separation job with retry
+            separation_hash = self._start_separation_job_with_retry(
+                drums_path,
+                self.SEP_DRUMSEP,
+                add_opt1="7",  # DrumSep MelBand Roformer (6 stems)
+                add_opt2="1"   # Use as is (audio must contain drums only)
+            )
 
-        # Wait for job completion
-        result_data = self._wait_for_completion(separation_hash)
+            # Wait for completion
+            result_data = self._wait_for_completion(separation_hash)
 
+            # Process the results
+            drum_components = self._process_drum_component_results(result_data)
+
+            # Add drums path for convenience
+            drum_components['drums_path'] = drums_path
+
+            return drum_components
+        except Exception as e:
+            logger.error(f"Failed to extract drum components from drums: {str(e)}")
+            raise
+
+    def _process_drum_component_results(self, result_data: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Process drum component extraction results.
+
+        Args:
+            result_data: Results from MVSep API
+
+        Returns:
+            Dictionary with paths to individual drum component files
+        """
         # Download the separated files
         files_info = result_data.get('files', [])
 
@@ -870,10 +1074,41 @@ class MVSepProcessor:
             if 'type' in file_info:
                 logger.info(f"File {i+1} type: {file_info['type']}")
 
-        # Try to identify the drum component files
+        # Dictionary to store all drum component paths and the full drums
         drum_stems = {}
 
-        # Check each file for identifying information
+        # First check for the full drums file
+        drums_found = False
+        for file_info in files_info:
+            url = file_info.get('url')
+            if not url:
+                continue
+
+            # Try to identify if this is the drums file
+            filename = file_info.get('filename', '').lower()
+            file_type = file_info.get('type', '').lower()
+
+            # Check if this is the full drums file
+            is_full_drums = False
+
+            if file_type:
+                is_full_drums = 'drums' in file_type and not any(x in file_type for x in ['kick', 'snare', 'tom', 'cymbal', 'hat'])
+
+            if not is_full_drums and filename:
+                is_full_drums = 'drums' in filename and not any(x in filename for x in ['kick', 'snare', 'tom', 'cymbal', 'hat'])
+
+            if not is_full_drums and url:
+                is_full_drums = 'drums' in url and not any(x in url for x in ['kick', 'snare', 'tom', 'cymbal', 'hat'])
+
+            if is_full_drums:
+                drums_path = self._download_file(url, self.temp_dir / 'drums.wav')
+                drum_stems['drums_path'] = drums_path
+                drums_found = True
+                logger.info(f"Found full drums file: url={url[:50]}...")
+                break
+
+        # Now identify the individual drum components
+        required_components = ['kick', 'snare', 'toms']
         for file_info in files_info:
             url = file_info.get('url')
             if not url:
@@ -926,26 +1161,52 @@ class MVSepProcessor:
                 drum_stems[component_type] = self._download_file(url, output_path)
                 logger.info(f"Found {component_type} file: url={url[:50]}...")
 
-        # If we couldn't identify all required components but have the right number of files, use positional assumptions
-        required_components = ['kick', 'snare', 'toms']
+        # If we couldn't identify all required components but have the right number of files,
+        # use positional assumptions
         missing_components = [comp for comp in required_components if comp not in drum_stems]
 
         if missing_components and len(files_info) >= len(required_components):
             logger.info(f"Missing components {missing_components}. Using positional assumptions.")
-            # Standard ordering from MVSep is usually kick, snare, toms, cymbals
-            component_mapping = {0: 'kick', 1: 'snare', 2: 'toms'}
 
-            for i, comp_type in component_mapping.items():
-                if comp_type in missing_components and i < len(files_info) and files_info[i].get('url'):
-                    output_path = self.temp_dir / f"{comp_type}.wav"
-                    drum_stems[comp_type] = self._download_file(files_info[i]['url'], output_path)
-                    logger.info(f"Found {comp_type} file using positional assumption: url={files_info[i]['url'][:50]}...")
+            # Try different positional mappings for DrumSep results
+            mappings = [
+                # First try: standard ordering without drums
+                {1: 'kick', 2: 'snare', 3: 'toms'},
+                # Second try: drums first
+                {0: 'drums_path', 1: 'kick', 2: 'snare', 3: 'toms'},
+                # Third try: alternative ordering
+                {0: 'kick', 1: 'snare', 2: 'toms'}
+            ]
 
-        # Check if we have all required components
-        missing = [comp for comp in required_components if comp not in drum_stems]
-        if missing:
-            logger.error(f"Missing drum components: {', '.join(missing)}")
-            raise Exception(f"Failed to extract drum components: missing {', '.join(missing)}")
+            # Try each mapping until we've found all components
+            for mapping in mappings:
+                for i, comp_type in mapping.items():
+                    if comp_type in missing_components and i < len(files_info) and files_info[i].get('url'):
+                        output_path = self.temp_dir / f"{comp_type}.wav"
+                        drum_stems[comp_type] = self._download_file(files_info[i]['url'], output_path)
+                        logger.info(f"Found {comp_type} using position {i}: url={files_info[i]['url'][:50]}...")
+
+                # Update missing components list
+                missing_components = [comp for comp in required_components if comp not in drum_stems]
+
+                # If we've found all components, we can stop trying mappings
+                if not missing_components:
+                    break
+
+        # Last resort: if we just have 3 files, assume they're kick, snare, toms in that order
+        if len(missing_components) == 3 and len(files_info) >= 3:
+            component_names = ['kick', 'snare', 'toms']
+            for i, name in enumerate(component_names):
+                if i < len(files_info) and files_info[i].get('url'):
+                    output_path = self.temp_dir / f"{name}.wav"
+                    drum_stems[name] = self._download_file(files_info[i]['url'], output_path)
+                    logger.info(f"Last resort: assuming file {i} is {name}")
+
+        # If we still have missing components, check for required ones
+        still_missing = [comp for comp in required_components if comp not in drum_stems]
+        if still_missing:
+            logger.error(f"Missing required drum components: {', '.join(still_missing)}")
+            raise Exception(f"Failed to extract drum components: missing {', '.join(still_missing)}")
 
         return drum_stems
 
@@ -1041,9 +1302,80 @@ class MVSepProcessor:
 
             return ee_path
 
-
         except Exception as e:
-
             logger.error(f"Error generating EE: {str(e)}")
-
             raise
+
+        # If positional assumption failed or wasn't applicable, try pattern matching
+        vocal_path = None
+        instrumental_path = None
+
+        # Check each file for identifying information
+        for file_info in files_info:
+            url = file_info.get('url')
+            if not url:
+                continue
+
+            # Check filename first
+            filename = file_info.get('filename', '').lower()
+            file_type = file_info.get('type', '').lower()
+
+            # Extract name from URL if filename is empty
+            if not filename and url:
+                # Try to extract filename from URL
+                url_parts = url.split('/')
+                if url_parts:
+                    filename = url_parts[-1].lower()
+
+            # Try to identify file type from filename or other properties
+            is_vocal = False
+            is_instrumental = False
+
+            # Check file_type if available
+            if file_type:
+                is_vocal = 'vocal' in file_type or 'voc' in file_type
+                is_instrumental = 'instrum' in file_type or 'accomp' in file_type or 'other' in file_type
+
+            # Check filename patterns
+            if not (is_vocal or is_instrumental) and filename:
+                is_vocal = 'vocal' in filename or 'voc' in filename or '_voc_' in filename
+                is_instrumental = ('instrum' in filename or 'accomp' in filename or
+                                'other' in filename or '_other' in filename)
+
+            # Use URL as fallback
+            if not (is_vocal or is_instrumental) and url:
+                is_vocal = 'vocal' in url or 'voc' in url or '_voc_' in url
+                is_instrumental = ('instrum' in url or 'accomp' in url or
+                                'other' in url or '_other' in url)
+
+            # Download the identified files
+            if is_vocal and not vocal_path:
+                vocal_path = self._download_file(url, self.temp_dir / 'vocals.wav')
+                logger.info(f"Found vocals file: url={url[:50]}...")
+
+            elif is_instrumental and not instrumental_path:
+                instrumental_path = self._download_file(url, self.temp_dir / 'instrumental.wav')
+                logger.info(f"Found instrumental file: url={url[:50]}...")
+
+        # If we couldn't find the expected files, log detailed info and raise exception
+        if not vocal_path or not instrumental_path:
+            missing = []
+            if not vocal_path:
+                missing.append("vocals")
+            if not instrumental_path:
+                missing.append("instrumental")
+
+            # Log more details
+            logger.error(f"Missing output files: {', '.join(missing)}")
+            file_details = []
+            for f in files_info:
+                details = {}
+                for key in ['url', 'filename', 'type']:
+                    if key in f:
+                        details[key] = f[key]
+                file_details.append(details)
+            logger.error(f"Available files: {file_details}")
+
+            raise Exception(f"Failed to extract vocals: output files not found ({', '.join(missing)} missing)")
+
+        return {"vocal_path": vocal_path, "instrumental_path": instrumental_path}

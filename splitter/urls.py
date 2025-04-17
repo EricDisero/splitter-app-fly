@@ -1,9 +1,14 @@
 from django.urls import path
+from django.http import HttpResponse
 
 from . import views
 
+def robots_txt(request):
+    return HttpResponse("User-agent: *\nDisallow: /\n", content_type="text/plain")
+
 urlpatterns = [
     path("", views.HomePage.as_view(), name="home"),
+    path("robots.txt", robots_txt),
     #path("setting/", views.SettingsPage.as_view(), name="setting"),
     path("split/", views.SplitFile.as_view(), name="split"),
     path("upload_audio/", views.UploadFile.as_view(), name="upload_audio"),

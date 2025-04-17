@@ -31,3 +31,20 @@ class LicenseMiddleware:
 
         # Continue processing if license is valid
         return self.get_response(request)
+
+from django.http import HttpResponse
+
+class BlockBotMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self.blocked_agents = [
+            'Googlebot', 'bingbot', 'YandexBot', 'AhrefsBot',
+            'MJ12bot', 'SemrushBot', 'DotBot', 'Baiduspider',
+            'PetalBot', 'crawler', 'python-requests'
+        ]
+
+    def __call__(self, request):
+        user_agent = request.META.get("HTTP_USER_AGENT", "")
+        if any(bot.lower() in user_agent.lower() for bot in self.blocked_agents):
+            return HttpResponse("Blocked bot", status=403)
+        return self.get_response(request)
