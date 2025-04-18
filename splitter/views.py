@@ -322,8 +322,8 @@ class DownloadFile(View):
         import time
 
         def delayed_cleanup():
-            # Wait for 1 minute to ensure downloads have had time to start
-            time.sleep(45)  # 45 seconds
+            # Wait for 70 seconds to ensure downloads have had time to start
+            time.sleep(70)  # 70 seconds
 
             try:
                 logger.info("Starting quick delayed cleanup of S3 files (1-minute delay)")
@@ -373,7 +373,7 @@ class DownloadFile(View):
         cleanup_thread = threading.Thread(target=delayed_cleanup)
         cleanup_thread.daemon = True  # Allow the app to exit even if thread is running
         cleanup_thread.start()
-        logger.info("Scheduled quick 45 second delayed cleanup task")
+        logger.info("Scheduled quick 70 second delayed cleanup task")
 
 
 @method_decorator(csrf_exempt, name='dispatch')
