@@ -219,7 +219,8 @@
             }
 
             // If fewer than 3 items, download simultaneously for speed
-            const useDelay = orderedDownloads.length > 3 && !isRetry;
+            const useDelay = true; // Always stagger downloads
+            const delayMs = 3000; // 3 seconds between downloads
             let downloadCount = 0;
 
             // Download files with an optional delay between each
@@ -271,7 +272,7 @@
                 // Use delay or download immediately
                 if (useDelay) {
                     // Stagger downloads with delay
-                    setTimeout(performDownload, index * 1000); // 1 second delay between downloads
+                    setTimeout(performDownload, index * delayMs);
                 } else {
                     // Download immediately (for retries or small batches)
                     performDownload();
