@@ -324,8 +324,8 @@ h1 {
   }
 }
 
-#keygen_license {
-  border-radius: 8px !important;
-  border: 1px solid rgba(139, 92, 246, 0.3) !important;
+#email {  
+  border-radius: 8px !important;  
+  border: 1px solid rgba(139, 92, 246, 0.3) !important;  
   overflow: hidden;
 }

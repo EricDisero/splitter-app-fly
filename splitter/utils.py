@@ -9,120 +9,133 @@ from datetime import datetime, timedelta
 logger = logging.getLogger("general_logger")
 
 # Constants for session management
-LICENSE_SESSION_KEY = 'validated_license'
-LICENSE_EXPIRY_HOURS = 24
+ACCESS_SESSION_KEY = 'validated_access'
+ACCESS_EXPIRY_HOURS = 24
 
-
-def get_license_hash(key):
-    """Create a secure hash of the license key"""
-    # Add a salt from settings for additional security
+def get_email_hash(email):
+    """Create a secure hash of the email"""
     salt = settings.SECRET_KEY[:16]
-    return hashlib.sha256((key + salt).encode()).hexdigest()
+    return hashlib.sha256((email + salt).encode()).hexdigest()
 
+def check_ghl_access(email):
+    """Validate email access against the GHL API - following exact Vercel pattern"""
+    # Clean and validate email (exact same as Vercel)
+    email = email.lower().strip()
+    if not email:
+        logger.error('Missing email parameter')
+        return False
+    
+    # Check for API key
+    API_KEY = settings.GHL_API_KEY
+    if not API_KEY:
+        logger.error('❌ GHL_API_KEY not configured')
+        return False
 
-def check_key(key):
-    """Validate a license key against the Keygen API"""
-    # Debug logging
-    logger.info(f"Starting key validation with KEYGEN_ACCOUNT_ID: {settings.KEYGEN_ACCOUNT_ID}")
-    logger.info(f"Key being validated: {key}")
+    logger.info(f'Checking access for email: {email}')
 
-    # Construct API endpoint
-    api_endpoint = f"https://api.keygen.sh/v1/accounts/{settings.KEYGEN_ACCOUNT_ID}/licenses/actions/validate-key"
-    logger.info(f"API endpoint: {api_endpoint}")
-
-    # Prepare request data
-    request_data = json.dumps({
-        "meta": {
-            "key": key
-        }
-    })
-    logger.info(f"Request payload: {request_data}")
-
-    # Make the API request
     try:
-        response = requests.post(
-            api_endpoint,
-            headers={
-                "Content-Type": "application/vnd.api+json",
-                "Accept": "application/vnd.api+json"
-            },
-            data=request_data
+        # Step 2: Fetch the contacts list (v1) - EXACT same endpoint as Vercel
+        list_url = f"https://rest.gohighlevel.com/v1/contacts/?email={email}"
+        list_res = requests.get(
+            list_url,
+            headers={'Authorization': f'Bearer {API_KEY}'},
+            timeout=10
         )
+        
+        if not list_res.ok:
+            logger.error(f'❌ v1 contacts list error: {list_res.status_code} {list_res.status_text}')
+            return False
 
-        # Log response details
-        logger.info(f"Response status code: {response.status_code}")
-        logger.info(f"Response content: {response.text[:200]}...")  # Log first 200 chars
+        list_data = list_res.json()
+        contacts = list_data.get('contacts', [])
 
-        validation = response.json()
-    except Exception as e:
-        logger.error(f"Exception during API request: {str(e)}")
+        # Step 3: Exact-match filter (SAME logic as Vercel)
+        if not isinstance(contacts, list) or len(contacts) == 0:
+            logger.info(f'❌ No contacts found at all for: {email}')
+            return False
+
+        # Find exact match
+        exact = None
+        for contact in contacts:
+            contact_email = contact.get('email', '').lower().strip()
+            if contact_email == email:
+                exact = contact
+                break
+
+        if not exact:
+            logger.info(f'❌ No EXACT email match for: {email}')
+            return False
+
+        logger.info(f'✓ Found EXACT contact match: {exact.get("email")} (ID: {exact.get("id")})')
+
+        # Step 4: Gather tags strictly from that contact (SAME as Vercel)
+        tags = []
+        exact_tags = exact.get('tags')
+        if isinstance(exact_tags, list):
+            tags = exact_tags
+        elif isinstance(exact_tags, str):
+            tags = exact_tags.split(',')
+            tags = [t.strip() for t in tags]
+        
+        logger.info(f'Tags for {email} → {tags}')
+
+        # Step 5: Check for access tag (SAME logic as Vercel gate)
+        required_tag = settings.GHL_ACCESS_TAG.lower()
+        has_access = any(required_tag in tag.lower() for tag in tags)
+
+        reason = 'has_proper_tag' if has_access else 'missing_splitter_access_tag'
+        logger.info(f'Decision for {email}: {"✅ GRANTED" if has_access else "❌ DENIED"} ({reason})')
+
+        return has_access
+
+    except Exception as err:
+        logger.error(f'🔥 Error in check_ghl_access: {err}')
         return False
 
-    if "errors" in validation:
-        errs = validation["errors"]
-
-        error_messages = '\n'.join(map(lambda e: "{} - {}".format(e["title"], e["detail"]).lower(), errs))
-        logger.info(f"License validation failed: {error_messages}")
-        return False
-
-    valid = validation["meta"]["valid"]
-    logger.info(f"License validation result: {valid}")
-
-    return valid
-
-
-def store_license_in_session(request, license_key):
-    """Store the validated license key in the session"""
-    # Check if sessions are available
+def store_access_in_session(request, email):
+    """Store the validated email in the session"""
     if hasattr(request, 'session'):
-        # Create license hash for storage
-        license_hash = get_license_hash(license_key)
-
-        # Store in session with expiry information
-        request.session[LICENSE_SESSION_KEY] = {
-            'hash': license_hash,
-            'expires': (datetime.now() + timedelta(hours=LICENSE_EXPIRY_HOURS)).isoformat()
+        email_hash = get_email_hash(email)
+        request.session[ACCESS_SESSION_KEY] = {
+            'hash': email_hash,
+            'email': email,
+            'expires': (datetime.now() + timedelta(hours=ACCESS_EXPIRY_HOURS)).isoformat()
         }
-        # Ensure session doesn't expire with browser close
-        request.session.set_expiry(LICENSE_EXPIRY_HOURS * 3600)  # in seconds
-        logger.info("License stored in session")
-
+        request.session.set_expiry(ACCESS_EXPIRY_HOURS * 3600)
+        logger.info("Access stored in session")
         return True
     else:
-        logger.warning("Session not available for license storage")
+        logger.warning("Session not available for access storage")
         return False
 
-
-def is_license_valid(request):
-    """Check if a valid license exists in the session"""
-    # Try to get from session
-    if hasattr(request, 'session') and LICENSE_SESSION_KEY in request.session:
-        license_data = request.session[LICENSE_SESSION_KEY]
-
-        # Check if license has expired
+def is_access_valid(request):
+    """Check if a valid access exists in the session"""
+    if hasattr(request, 'session') and ACCESS_SESSION_KEY in request.session:
+        access_data = request.session[ACCESS_SESSION_KEY]
+        
         try:
-            expiry = datetime.fromisoformat(license_data['expires'])
+            expiry = datetime.fromisoformat(access_data['expires'])
             if datetime.now() < expiry:
-                logger.info("Valid license found in session")
+                logger.info("Valid access found in session")
                 return True
             else:
-                logger.info("License in session has expired")
-                # Clean up expired session data
-                del request.session[LICENSE_SESSION_KEY]
+                logger.info("Access in session has expired")
+                del request.session[ACCESS_SESSION_KEY]
         except (ValueError, KeyError) as e:
-            logger.error(f"Error parsing license data from session: {str(e)}")
-            # Session data is malformed, remove it
-            del request.session[LICENSE_SESSION_KEY]
-
-    logger.info("No valid license found in session")
+            logger.error(f"Error parsing access data from session: {str(e)}")
+            del request.session[ACCESS_SESSION_KEY]
+    
+    logger.info("No valid access found in session")
     return False
 
+def clear_access(request):
+    """Clear access data from session"""
+    if hasattr(request, 'session') and ACCESS_SESSION_KEY in request.session:
+        del request.session[ACCESS_SESSION_KEY]
+    logger.info("Access data cleared")
 
-def clear_license(request):
-    """Clear license data from session"""
-    # Clear from session
-    if hasattr(request, 'session') and LICENSE_SESSION_KEY in request.session:
-        del request.session[LICENSE_SESSION_KEY]
-
-    logger.info("License data cleared")
-    return
+# Keep these for backward compatibility - just alias the new functions
+check_key = check_ghl_access
+is_license_valid = is_access_valid
+store_license_in_session = store_access_in_session
+clear_license = clear_access

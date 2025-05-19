@@ -100,20 +100,23 @@
     </div>
 {% endif %}
 
-{% if keygen_section %}
-    <!-- Step 1: License Key -->
-    <div class="step active" id="step-license">
+
+
+{% if email_section %}
+    <!-- Step 1: Email Verification -->
+    <div class="step active" id="step-email">
         <form hx-post="{% url 'validate_keygen' %}" hx-target="#app-container" hx-swap="innerHTML">
             {% csrf_token %}
             <div class="input-group">
-                <label class="input-label">Enter your license key to begin</label>
-                <input type="text" id="keygen_license" name="keygen_license" class="input-field" placeholder="XXXX-XXXX-XXXX-XXXX">
+                <label class="input-label">Enter your email to verify access</label>
+                <input type="email" id="email" name="email" class="input-field" placeholder="your@email.com" required>
             </div>
             <button type="submit" class="btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
                 </svg>
-                Validate License
+                Verify Access
             </button>
         </form>
     </div>

@@ -138,7 +138,11 @@ MVSEP_MAX_FILE_SIZE = int(os.getenv('MVSEP_MAX_FILE_SIZE', str(100 * 1024 * 1024
 MVSEP_TEMP_FILE_TTL = int(os.getenv('MVSEP_TEMP_FILE_TTL', str(86400)))
 
 # --- Keygen Licensing (Optional) ---
-KEYGEN_ACCOUNT_ID = os.getenv("KEYGEN_ACCOUNT_ID")
+# KEYGEN_ACCOUNT_ID = os.getenv("KEYGEN_ACCOUNT_ID")  # No longer needed
+
+# --- GoHighLevel Configuration ---
+GHL_API_KEY = os.getenv("GHL_API_KEY")
+GHL_ACCESS_TAG = os.getenv("GHL_ACCESS_TAG", "splitter access")
 
 # --- Security Settings in Production ---
 if not DEBUG:

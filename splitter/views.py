@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.conf import settings
-from .utils import check_key, is_license_valid, store_license_in_session, clear_license
+from .utils import check_key, is_license_valid, store_license_in_session, clear_license, check_ghl_access, store_access_in_session, clear_access, is_access_valid
 from .mvsep_processor import MVSepProcessor
 
 logger = logging.getLogger("general_logger")
@@ -25,30 +25,32 @@ def get_s3():
 
 class HomePage(TemplateView):
     def get(self, request):
-        context = {'upload_section': True} if is_license_valid(request) else {'keygen_section': True}
+        context = {'upload_section': True} if is_access_valid(request) else {'email_section': True}
         return render(request, 'home.html', context)
 
 
 class ValidateKeygen(TemplateView):
     def post(self, request):
         logger.info("ValidateKeygen POST received")
-        key = request.POST.get('keygen_license', '').strip()
-        if not key:
+        email = request.POST.get('email', '').strip()
+        
+        if not email:
             return render(request, 'partials/file_upload_split.html', {
-                'keygen_section': True,
-                'error_message': 'License key cannot be empty!'
+                'email_section': True,
+                'error_message': 'Email cannot be empty!'
             })
 
-        logger.info(f"Validating license key (first 4 chars): {key[:4]}...")
-        if check_key(key):
-            logger.info("License key valid, storing in session")
-            store_license_in_session(request, key)
+        logger.info(f"Validating access for email: {email}")
+        
+        if check_ghl_access(email):
+            logger.info("Email access valid, storing in session")
+            store_access_in_session(request, email)
             return render(request, 'partials/file_upload_split.html', {'upload_section': True})
 
-        logger.warning("Invalid license key provided")
+        logger.warning("Invalid email or no access")
         return render(request, 'partials/file_upload_split.html', {
-            'keygen_section': True,
-            'error_message': 'License key is invalid. Please try again.'
+            'email_section': True,
+            'error_message': 'Email not found or access not granted. Please check with support.'
         })
 
 
@@ -457,5 +459,5 @@ class CleanupS3View(View):
 class LogoutView(TemplateView):
     def get(self, request):
         logger.info("Logout requested")
-        clear_license(request)
+        clear_access(request)
         return redirect('home')
