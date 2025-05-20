@@ -20,20 +20,21 @@ def get_email_hash(email):
 def check_ghl_access(email):
     """Validate email access against the GHL API - following exact Vercel pattern"""
     # Clean and validate email (exact same as Vercel)
-    email = email.lower().strip()
-    if not email:
-        logger.error('Missing email parameter')
-        return False
-    
-    # Check for API key
-    API_KEY = settings.GHL_API_KEY
-    if not API_KEY:
-        logger.error('❌ GHL_API_KEY not configured')
-        return False
-
-    logger.info(f'Checking access for email: {email}')
-
     try:
+        logger.info(f"Email before cleaning: {email}, type: {type(email)}")
+        email = email.lower().strip()
+        if not email:
+            logger.error('Missing email parameter')
+            return False
+        
+        # Check for API key
+        API_KEY = settings.GHL_API_KEY
+        if not API_KEY:
+            logger.error('❌ GHL_API_KEY not configured')
+            return False
+
+        logger.info(f'Checking access for email: {email}')
+
         # Step 2: Fetch the contacts list (v1) - EXACT same endpoint as Vercel
         list_url = f"https://rest.gohighlevel.com/v1/contacts/?email={email}"
         list_res = requests.get(
@@ -43,11 +44,12 @@ def check_ghl_access(email):
         )
         
         if not list_res.ok:
-            logger.error(f'❌ v1 contacts list error: {list_res.status_code} {list_res.status_text}')
+            logger.error(f'❌ v1 contacts list error: {list_res.status_code} {list_res.text}')
             return False
 
         list_data = list_res.json()
         contacts = list_data.get('contacts', [])
+        logger.info(f"Contacts found: {len(contacts)}")
 
         # Step 3: Exact-match filter (SAME logic as Vercel)
         if not isinstance(contacts, list) or len(contacts) == 0:
@@ -57,7 +59,17 @@ def check_ghl_access(email):
         # Find exact match
         exact = None
         for contact in contacts:
-            contact_email = contact.get('email', '').lower().strip()
+            if contact is None:
+                logger.warning("Found None contact in contacts list")
+                continue
+                
+            logger.debug(f"Contact data: {contact}")
+            contact_email = contact.get('email', '')
+            if contact_email is None:
+                logger.warning(f"Contact has None email: {contact}")
+                continue
+                
+            contact_email = contact_email.lower().strip()
             if contact_email == email:
                 exact = contact
                 break
@@ -71,18 +83,37 @@ def check_ghl_access(email):
         # Step 4: Gather tags strictly from that contact (SAME as Vercel)
         tags = []
         exact_tags = exact.get('tags')
+        logger.info(f"Tags data type: {type(exact_tags)}, value: {exact_tags}")
+        
         if isinstance(exact_tags, list):
             tags = exact_tags
         elif isinstance(exact_tags, str):
             tags = exact_tags.split(',')
             tags = [t.strip() for t in tags]
         
+        # Log each tag for debugging
+        for i, tag in enumerate(tags):
+            logger.info(f"Tag {i}: {tag}, type: {type(tag)}")
+        
         logger.info(f'Tags for {email} → {tags}')
 
         # Step 5: Check for access tag (SAME logic as Vercel gate)
-        required_tag = settings.GHL_ACCESS_TAG.lower()
-        has_access = any(required_tag in tag.lower() for tag in tags)
-
+        logger.info(f"GHL_ACCESS_TAG: {settings.GHL_ACCESS_TAG}, type: {type(settings.GHL_ACCESS_TAG)}")
+        required_tag = settings.GHL_ACCESS_TAG.lower() if settings.GHL_ACCESS_TAG else ""
+        logger.info(f"Required tag: {required_tag}")
+        
+        has_access = False
+        for tag in tags:
+            if not isinstance(tag, str):
+                logger.warning(f"Non-string tag found: {tag}, type: {type(tag)}")
+                continue
+            try:
+                if required_tag in tag.lower():
+                    has_access = True
+                    break
+            except Exception as e:
+                logger.error(f"Error processing tag '{tag}': {e}")
+        
         reason = 'has_proper_tag' if has_access else 'missing_splitter_access_tag'
         logger.info(f'Decision for {email}: {"✅ GRANTED" if has_access else "❌ DENIED"} ({reason})')
 
