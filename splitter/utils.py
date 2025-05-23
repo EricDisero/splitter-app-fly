@@ -34,88 +34,96 @@ def get_email_hash(email):
     return hashlib.sha256((email + salt).encode()).hexdigest()
 
 def check_ghl_access(email):
-    """Validate email access against the GHL API and update database"""
+    """Validate email access against the GHL API and update database
+    Returns: (has_access, access_type, message, email_found)
+    """
     try:
         logger.info(f"Email before cleaning: {email}, type: {type(email)}")
         email = email.lower().strip()
         if not email:
             logger.error('Missing email parameter')
-            return False
+            return False, 'none', 'Missing email parameter', False
         
         # Check for API key
         API_KEY = settings.GHL_API_KEY
         if not API_KEY:
             logger.error('❌ GHL_API_KEY not configured')
-            return False
+            return False, 'none', 'API configuration error', False
 
         logger.info(f'Checking access for email: {email}')
 
-        # Step 2: Fetch the contacts list (v1)
-        list_url = f"https://rest.gohighlevel.com/v1/contacts/?email={email}"
-        list_res = requests.get(
-            list_url,
-            headers={'Authorization': f'Bearer {API_KEY}'},
-            timeout=10
-        )
+        # Step 1: Check if we already have this user in our database with recent validation
+        try:
+            email_hash = get_email_hash(email)
+            user = UserAccount.objects.get(email_hash=email_hash)
+            
+            # Always re-validate tags to ensure immediate access level changes
+            # but we'll update the database with fresh tag data each time
+            logger.info(f"Found existing user {email}, re-validating tags for immediate access changes...")
+                
+        except UserAccount.DoesNotExist:
+            pass  # User not in database, need to fetch from GHL
         
-        if not list_res.ok:
-            logger.error(f'❌ v1 contacts list error: {list_res.status_code} {list_res.text}')
-            return False
-
-        list_data = list_res.json()
-        contacts = list_data.get('contacts', [])
-        logger.info(f"Contacts found: {len(contacts)}")
-
-        # Step 3: Exact-match filter
-        if not isinstance(contacts, list) or len(contacts) == 0:
-            logger.info(f'❌ No contacts found at all for: {email}')
-            return False
-
-        # Find exact match
+        # Step 2: Try multiple search approaches for instant results
+        session = requests.Session()
+        session.headers.update({'Authorization': f'Bearer {API_KEY}'})
+        
         exact = None
-        for contact in contacts:
-            if contact is None:
-                logger.warning("Found None contact in contacts list")
-                continue
+        
+        try:
+            # Try exact email search with query parameter (this is fast and effective)
+            logger.info(f"Searching for email: {email}")
+            search_url = f"https://rest.gohighlevel.com/v1/contacts/?query={email}&limit=100"
+            search_res = session.get(search_url, timeout=10)
+            
+            if search_res.ok:
+                search_data = search_res.json()
+                contacts = search_data.get('contacts', [])
+                logger.info(f"Query search returned {len(contacts)} contacts")
                 
-            logger.debug(f"Contact data: {contact}")
-            contact_email = contact.get('email', '')
-            if contact_email is None:
-                logger.warning(f"Contact has None email: {contact}")
-                continue
-                
-            contact_email = contact_email.lower().strip()
-            if contact_email == email:
-                exact = contact
-                break
+                # Look for exact match
+                for contact in contacts:
+                    if contact and contact.get('email', '').lower().strip() == email:
+                        exact = contact
+                        logger.info(f'✓ FOUND via query search: {contact.get("email")}')
+                        break
+                    
+        finally:
+            session.close()
 
         if not exact:
-            logger.info(f'❌ No EXACT email match for: {email}')
-            return False
+            logger.info(f'❌ No contact found for email: {email} after trying all search methods')
+            return False, 'none', f'Email {email} not found in our system. Please email hello@mypulseacademy.com to get access.', False
 
-        logger.info(f'✓ Found EXACT contact match: {exact.get("email")} (ID: {exact.get("id")})')
         contact_id = exact.get("id")
 
-        # Step 4: Gather tags from the contact
+        # Step 3: Process tags from the contact
         tags = []
         exact_tags = exact.get('tags')
         logger.info(f"Tags data type: {type(exact_tags)}, value: {exact_tags}")
         
         if isinstance(exact_tags, list):
-            tags = exact_tags
+            # Filter out None values and ensure strings
+            tags = [str(tag).strip() for tag in exact_tags if tag is not None and str(tag).strip()]
         elif isinstance(exact_tags, str):
             tags = exact_tags.split(',')
-            tags = [t.strip() for t in tags]
+            tags = [t.strip() for t in tags if t.strip()]
         
         # Log each tag for debugging
         for i, tag in enumerate(tags):
-            logger.info(f"Tag {i}: {tag}, type: {type(tag)}")
+            logger.info(f"Tag {i}: '{tag}', type: {type(tag)}")
         
-        logger.info(f'Tags for {email} → {tags}')
+        logger.info(f'All tags for {email}: {tags}')
 
-        # Create a helper function to check for tags
+        # Step 4: Check for access tags (case insensitive)
         def has_tag(tag_substring):
-            return any(tag_substring.lower() in tag.lower() for tag in tags if isinstance(tag, str))
+            if not tags:
+                return False
+            return any(
+                tag_substring.lower() in str(tag).lower() 
+                for tag in tags 
+                if tag is not None and str(tag).strip()
+            )
 
         # Determine access type based on tags (in order of priority)
         access_type = 'none'
@@ -128,23 +136,29 @@ def check_ghl_access(email):
             access_type = 'lifetime'
             has_access = True
             monthly_limit = 0  # unlimited
+            logger.info(f"✅ LIFETIME access granted for {email}")
             
         elif has_tag(YEARLY_TAG):
             access_type = 'yearly'
             has_access = True
             monthly_limit = 0  # unlimited
+            logger.info(f"✅ YEARLY access granted for {email}")
             
         elif has_tag(MONTHLY_TAG):
             access_type = 'monthly'
             has_access = True
             monthly_limit = DEFAULT_MONTHLY_LIMIT
+            logger.info(f"✅ MONTHLY access granted for {email}")
             
         elif has_tag(DEMO_TAG):
             access_type = 'demo'
             has_access = True
             monthly_limit = 0  # demo uses total limit instead
+            logger.info(f"✅ DEMO access granted for {email}")
+        else:
+            logger.info(f"❌ No valid access tags found for {email}. Available tags: {tags}")
         
-        # Try to get or create user account in our database
+        # Step 5: Update user account in our database
         try:
             email_hash = get_email_hash(email)
             
@@ -171,13 +185,25 @@ def check_ghl_access(email):
         except Exception as db_err:
             logger.error(f"Error updating user account in database: {db_err}")
             # Continue without storing in DB - we have GHL validation
+        
+        # Return detailed result
+        if has_access:
+            message = f"Access granted ({access_type})"
+            logger.info(f'Final decision for {email}: ✅ GRANTED (access_type: {access_type})')
+        else:
+            message = f'Your email ({email}) was found in our system but you don\'t have access. Please email hello@mypulseacademy.com to get access.'
+            logger.info(f'Final decision for {email}: ❌ DENIED (no valid tags)')
             
-        logger.info(f'Decision for {email}: {"✅ GRANTED" if has_access else "❌ DENIED"} (access_type: {access_type})')
-        return has_access
+        return has_access, access_type, message, True  # email_found = True
 
     except Exception as err:
         logger.error(f'🔥 Error in check_ghl_access: {err}')
-        return False
+        return False, 'none', 'An error occurred while checking access', False
+
+def fetch_access_contacts_from_ghl():
+    """This function is no longer needed - kept for compatibility"""
+    logger.warning("fetch_access_contacts_from_ghl() is deprecated")
+    return []
 
 def store_access_in_session(request, email):
     """Store the validated email in the session"""
@@ -221,31 +247,38 @@ def is_access_valid(request):
             try:
                 user = UserAccount.objects.get(email_hash=email_hash)
                 
-                # If it's been more than 30 minutes since last validation, revalidate with GHL
-                if timezone.now() > user.last_validated_at + timedelta(minutes=30):
-                    logger.info(f"Revalidating access with GHL for {email}")
-                    if not check_ghl_access(email):
-                        logger.warning(f"GHL access revoked for {email}")
-                        del request.session[ACCESS_SESSION_KEY]
-                        return False
+                # Check if user still has active access by re-validating with GHL every time
+                # This ensures immediate tag change detection while keeping email session alive
+                logger.info(f"Re-validating current access level for {email}")
+                has_access, access_type, message, email_found = check_ghl_access(email)
                 
-                # Check if user still has active access in our database
-                if not user.has_active_access:
-                    logger.warning(f"User no longer has active access: {email}")
+                if not email_found:
+                    # Email was removed from GHL entirely - delete session
+                    logger.warning(f"Email {email} no longer exists in GHL system")
                     del request.session[ACCESS_SESSION_KEY]
                     return False
-                    
-                logger.info(f"Valid access found for {email} (type: {user.access_type})")
+                elif not has_access:
+                    # Email exists but no access - keep session but deny access
+                    logger.warning(f"Email {email} found but access denied: {message}")
+                    return False
+                
+                # If validation passed, access is still valid
+                logger.info(f"Access confirmed for {email}: {message}")
                 return True
                 
             except UserAccount.DoesNotExist:
                 logger.warning(f"User account not found in database: {email}")
                 # Try to revalidate with GHL
-                if check_ghl_access(email):
+                has_access, access_type, message, email_found = check_ghl_access(email)
+                if email_found and has_access:
                     logger.info(f"Revalidated access with GHL for {email}")
                     return True
-                else:
+                elif not email_found:
+                    # Email not found in GHL - delete session
                     del request.session[ACCESS_SESSION_KEY]
+                    return False
+                else:
+                    # Email found but no access - keep session but deny
                     return False
                 
         except (ValueError, KeyError) as e:

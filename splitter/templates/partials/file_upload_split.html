@@ -1,9 +1,5 @@
 {% load static %}
 
-{% if error_message %}
-    <div class="error">{{ error_message }}</div>
-{% endif %}
-
 {% if split_section %}
     <!-- Step 3: Splitting -->
     <div class="step active" id="step-splitting">
@@ -32,7 +28,10 @@
                 Split Audio
             </button>
 
-            <p class="mt-3 text-xs text-gray-400">This will process your track through multiple custom AI models to extract 7 separate stems. Processing will take a while. It'll be worth the wait.</p>
+            <div class="processing-info">
+                <p class="processing-text">This will process your track through multiple custom AI models to extract 7 separate stems.</p>
+                <p class="processing-timing">Processing typically takes 3-5 minutes. Longer files may take 5-10 minutes.</p>
+            </div>
         </form>
 
         <script>
@@ -93,10 +92,6 @@
                 Download Stems
             </button>
         </form>
-
-        <div class="mt-4 text-sm text-center text-gray-400">
-            Your browser will download 7 separate stems.
-        </div>
     </div>
 {% endif %}
 
@@ -105,6 +100,10 @@
 {% if email_section %}
     <!-- Step 1: Email Verification -->
     <div class="step active" id="step-email">
+        {% if error_message %}
+        <div class="error">{{ error_message }}</div>
+        {% endif %}
+        
         <form hx-post="{% url 'validate_keygen' %}" hx-target="#app-container" hx-swap="innerHTML">
             {% csrf_token %}
             <div class="input-group">
@@ -125,6 +124,10 @@
 {% if upload_section %}
     <!-- Step 2: Upload -->
     <div class="step active" id="step-upload">
+        {% if error_message %}
+        <div class="error">{{ error_message }}</div>
+        {% endif %}
+        
         {% if has_user_info %}
         <div class="user-account-info">
             <div class="user-email">
@@ -143,6 +146,21 @@
         </div>
         {% endif %}
 
+        {% if show_upgrade_message %}
+        <!-- Show upgrade message and disable dropzone when at limit -->
+        <div class="dropzone dropzone-disabled" style="opacity: 0.5; pointer-events: none;">
+            <div class="dropzone-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+            </div>
+            <div class="upload-instructions" style="color: #6b7280;">Upload disabled - limit reached</div>
+            <div class="upload-browse" style="color: #6b7280;">Contact support to upgrade your plan</div>
+        </div>
+        {% else %}
+        <!-- Normal upload dropzone -->
         <form id="fileUploadForm" hx-post="{% url 'upload_audio' %}" hx-encoding="multipart/form-data" hx-target="#app-container" hx-swap="innerHTML">
             {% csrf_token %}
             <div class="dropzone" id="dropzone"
@@ -164,23 +182,53 @@
             <input type="file" id="fileInput" style="display: none;" name="file" accept=".mp3,.wav,.flac,.aif">
             <button type="submit" id="uploadButton" style="display: none;"></button>
         </form>
+        {% endif %}
+        
+        {% if not show_upgrade_message %}
         <script>
+            // Global flag to prevent file dialog issues across HTMX swaps
+            if (!window.fileDialogState) {
+                window.fileDialogState = {
+                    isBlocked: false,
+                    blockTimeout: null
+                };
+            }
+
+            // Clean up any existing event listeners first
+            const dropzone = document.getElementById('dropzone');
+            const fileInput = document.getElementById('fileInput');
+            const uploadForm = document.getElementById('fileUploadForm');
+
+            // Remove existing listeners by cloning elements (this removes all listeners)
+            if (dropzone) {
+                const newDropzone = dropzone.cloneNode(true);
+                dropzone.parentNode.replaceChild(newDropzone, dropzone);
+            }
+
+            if (fileInput) {
+                const newFileInput = fileInput.cloneNode(true);
+                fileInput.parentNode.replaceChild(newFileInput, fileInput);
+            }
+
+            // Get the clean elements
+            const cleanDropzone = document.getElementById('dropzone');
+            const cleanFileInput = document.getElementById('fileInput');
+            const cleanUploadForm = document.getElementById('fileUploadForm');
+
             // Set up file dropzone
             function dragOverHandler(ev) {
                 ev.preventDefault();
-                document.getElementById('dropzone').classList.add('drag-over');
+                cleanDropzone.classList.add('drag-over');
             }
 
             function dragLeaveHandler(ev) {
                 ev.preventDefault();
-                document.getElementById('dropzone').classList.remove('drag-over');
+                cleanDropzone.classList.remove('drag-over');
             }
 
             function dropHandler(ev) {
                 ev.preventDefault();
-                document.getElementById('dropzone').classList.remove('drag-over');
-
-                const fileInput = document.getElementById('fileInput');
+                cleanDropzone.classList.remove('drag-over');
 
                 if (ev.dataTransfer.items) {
                     // Use DataTransferItemList interface to access the file(s)
@@ -197,38 +245,79 @@
                     });
 
                     if (validFileFound) {
-                        fileInput.files = dt.files;
+                        cleanFileInput.files = dt.files;
                         document.getElementById('uploadButton').click();
                     }
                 } else if (ev.dataTransfer.files && ev.dataTransfer.files.length > 0) {
-                    fileInput.files = ev.dataTransfer.files;
+                    cleanFileInput.files = ev.dataTransfer.files;
                     document.getElementById('uploadButton').click();
                 }
             }
 
-            // Set up click functionality for the dropzone
-            document.getElementById('dropzone').addEventListener('click', function() {
-                document.getElementById('fileInput').click();
-            });
+            // Set up event listeners on clean elements
+            cleanDropzone.ondrop = dropHandler;
+            cleanDropzone.ondragover = dragOverHandler;
+            cleanDropzone.ondragleave = dragLeaveHandler;
 
-            // Trigger form submission when file is selected
-            document.getElementById('fileInput').addEventListener('change', function() {
-                if (this.files.length > 0) {
+            // Single click handler for dropzone
+            cleanDropzone.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                
+                if (window.fileDialogState.isBlocked) {
+                    console.log('File dialog blocked - ignoring click');
+                    return false;
+                }
+                
+                console.log('Opening file dialog');
+                window.fileDialogState.isBlocked = true;
+                
+                // Clear any existing timeout
+                if (window.fileDialogState.blockTimeout) {
+                    clearTimeout(window.fileDialogState.blockTimeout);
+                }
+                
+                // Set timeout to unblock after 4 seconds
+                window.fileDialogState.blockTimeout = setTimeout(() => {
+                    window.fileDialogState.isBlocked = false;
+                    console.log('File dialog unblocked');
+                }, 4000);
+                
+                // Open the dialog
+                cleanFileInput.click();
+                
+                return false;
+            }, { once: false, passive: false });
+
+            // Handle file selection
+            cleanFileInput.addEventListener('change', function(event) {
+                console.log('File selection changed');
+                
+                // Immediately unblock
+                window.fileDialogState.isBlocked = false;
+                if (window.fileDialogState.blockTimeout) {
+                    clearTimeout(window.fileDialogState.blockTimeout);
+                    window.fileDialogState.blockTimeout = null;
+                }
+                
+                // Only proceed if files were actually selected
+                if (this.files && this.files.length > 0) {
                     console.log(`File selected: ${this.files[0].name}`);
                     document.getElementById('uploadButton').click();
                 }
-            });
+            }, { once: false, passive: false });
 
             // Show processing animation when form is submitted
-            document.getElementById('fileUploadForm').addEventListener('submit', function() {
+            cleanUploadForm.addEventListener('submit', function() {
                 console.log("Upload form submitted");
                 // Show uploading animation
                 const uploadingDiv = document.createElement('div');
                 uploadingDiv.className = 'upload-instructions';
                 uploadingDiv.style.marginTop = '20px';
                 uploadingDiv.innerHTML = '<div>UPLOADING...</div>';
-                document.getElementById('dropzone').appendChild(uploadingDiv);
+                cleanDropzone.appendChild(uploadingDiv);
             });
         </script>
+        {% endif %}
     </div>
 {% endif %}

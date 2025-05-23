@@ -1,64 +1,36 @@
-// Improved download management script without client-side cleanup
+// Simplified download management script
 (function() {
-    // Counter for download retries
-    const MAX_RETRIES = 3;
-    let retryCount = 0;
+    let stemData = null;
+    let downloadUrlsCache = null;
 
-    // Store stem data between attempts
-    let cachedStemData = null;
-
-    // Define stem type categories for better UI and download ordering
-    const stemCategories = {
-        primary: ['vocals', 'bass', 'ee'],
-        drumComponents: ['kick', 'snare', 'toms', 'hats'],
-        other: [] // For any other stem types that might be added in the future
-    };
-
-    // Function to set up download handler for the button
+    // Function to set up download handler for the main button
     function setupDownloadHandler(downloadBtn) {
         // Remove any existing listeners first to prevent multiple attachments
         const oldBtn = downloadBtn.cloneNode(true);
         downloadBtn.parentNode.replaceChild(oldBtn, downloadBtn);
 
         oldBtn.addEventListener('click', function(event) {
-            // Prevent default behavior
             event.preventDefault();
-
-            // Disable button and show loading state
-            this.disabled = true;
-            const originalInnerHTML = this.innerHTML;
-            this.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
-                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                </svg>
-                Preparing downloads...
-            `;
-
-            // Get form data
-            const baseName = document.getElementById('zip_file_name').value;
-            const stemFilesInput = document.getElementById('stem_files');
-
-            // Cache the stem data for potential retries
-            if (!cachedStemData) {
-                cachedStemData = stemFilesInput.value;
-            }
-
-            console.log('Initiating download for:', baseName);
-
-            // Start the download process with possible retries
-            startDownloadProcess(baseName, cachedStemData, this, originalInnerHTML);
+            downloadAllStems(this);
         });
     }
 
-    // Main download process function with retry capability
-    function startDownloadProcess(baseName, stemData, button, originalHTML) {
-        // Check for max retries
-        if (retryCount >= MAX_RETRIES) {
-            alert('Download failed after multiple attempts. Please refresh the page and try again.');
-            button.disabled = false;
-            button.innerHTML = originalHTML;
-            return;
-        }
+    // Download all stems function
+    function downloadAllStems(button) {
+        // Disable button and show loading state
+        button.disabled = true;
+        const originalInnerHTML = button.innerHTML;
+        
+        button.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            Preparing downloads...
+        `;
+
+        // Get form data
+        const baseName = document.getElementById('zip_file_name').value;
+        const stemFilesInput = document.getElementById('stem_files');
 
         // Fetch download URLs
         fetch('/download/', {
@@ -70,25 +42,32 @@
             },
             body: new URLSearchParams({
                 base_name: baseName,
-                stem_files: stemData
-            }),
-            // Increased timeout
-            timeout: 60000 // 60 seconds
+                stem_files: stemFilesInput.value
+            })
         })
-        .then(response => {
-            console.log('Download response status:', response.status);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
+        .then(response => response.json())
         .then(data => {
-            console.log('Download data received:', data);
             if (data.status !== 'success') {
                 throw new Error(data.message || 'Download failed');
             }
 
-            // Update button text
+            // Cache the download URLs for individual downloads
+            downloadUrlsCache = data.download_urls;
+
+            // Update stem data with download URLs for individual downloads
+            if (stemData && data.download_urls) {
+                stemData.forEach(stem => {
+                    const matchingUrl = data.download_urls.find(url => 
+                        url.filename === stem.filename
+                    );
+                    if (matchingUrl) {
+                        stem.url = matchingUrl.url;
+                    }
+                });
+                // Re-setup handlers now that we have URLs
+                setupIndividualDownloadHandlers();
+            }
+
             button.innerHTML = `
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin">
                     <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
@@ -96,200 +75,113 @@
                 Downloading files...
             `;
 
-            // Trigger downloads
-            return downloadStems(data.download_urls, baseName);
+            // Download all files with a small delay between each
+            return downloadFiles(data.download_urls);
         })
-        .then((downloadInfo) => {
-            // If any downloads failed, retry those specifically
-            if (downloadInfo.failedDownloads && downloadInfo.failedDownloads.length > 0) {
-                console.warn(`${downloadInfo.failedDownloads.length} downloads failed, retrying those...`);
-                return downloadStems(downloadInfo.failedDownloads, baseName, true);
-            }
-            return downloadInfo;
-        })
-        .then((downloadInfo) => {
-            // Update button with success state
-            button.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                </svg>
-                Downloads Complete
-            `;
+        .then(() => {
+            // Re-enable button and show success state
+            button.disabled = false;
+            button.innerHTML = originalInnerHTML;
+
+            // Hide the browser download message
+            hideBrowserDownloadMessage();
 
             // Show success message
-            const successMsg = `All ${downloadInfo.totalDownloads} stems have been downloaded.`;
+            showDownloadComplete(button, stemData?.length || 0);
 
-            // Add a message below the button
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'mt-3 text-sm text-center text-gray-400';
-            messageDiv.textContent = successMsg;
-            button.parentNode.appendChild(messageDiv);
-
-            // Add a Return Home link after a delay
+            // Add Return Home button after a delay
             setTimeout(() => {
-                const homeLink = document.createElement('a');
-                homeLink.className = 'btn mt-3';
-                homeLink.innerHTML = 'Return to Home';
-                homeLink.href = '/';
-                homeLink.style.display = 'inline-block';
-                homeLink.style.textDecoration = 'none';
-
-                button.parentNode.appendChild(homeLink);
+                addReturnHomeButton(button);
             }, 2000);
-
-            return downloadInfo;
         })
         .catch(error => {
-            console.error('Download process error:', error);
-
-            // Increment retry counter
-            retryCount++;
-
-            // Show retry message
-            const errorMsg = `Download encountered an issue. Retrying (${retryCount}/${MAX_RETRIES})...`;
-            console.warn(errorMsg);
-
-            // Update button to show retry state
-            button.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M23 4v6h-6"></path>
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                </svg>
-                Retrying...
-            `;
-
-            // Retry the download process after a delay
-            setTimeout(() => {
-                startDownloadProcess(baseName, stemData, button, originalHTML);
-            }, 3000);
+            console.error('Download error:', error);
+            
+            // Re-enable button on error
+            button.disabled = false;
+            button.innerHTML = originalInnerHTML;
+            
+            alert('Download failed. Please try again.');
         });
     }
 
-    // Sort and download stems in a logical order with reliability improvements
-    function downloadStems(downloadUrls, baseName, isRetry = false) {
-        return new Promise((resolve, reject) => {
-            const totalUrls = downloadUrls.length;
-            console.log(`Preparing to download ${totalUrls} stems for ${baseName}${isRetry ? ' (retry attempt)' : ''}`);
+    // Hide the browser download message
+    function hideBrowserDownloadMessage() {
+        const browserMessage = document.querySelector('.mt-4.text-sm.text-center.text-gray-400');
+        if (browserMessage && browserMessage.textContent.includes('Your browser will download')) {
+            browserMessage.style.display = 'none';
+        }
+    }
 
-            if (totalUrls === 0) {
-                console.warn('No download URLs found');
-                resolve({totalDownloads: 0, successfulDownloads: 0, failedDownloads: []});
-                return;
-            }
+    // Download individual stem
+    function downloadIndividualStem(downloadUrl, filename) {
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
 
-            // Track download results
-            let successfulDownloads = 0;
-            let failedDownloads = [];
-
-            // If not retrying, categorize and order stems
-            let orderedDownloads = downloadUrls;
-
-            if (!isRetry) {
-                // Categorize stems by type
-                let primaryStems = [];
-                let drumComponents = [];
-                let otherStems = [];
-
-                downloadUrls.forEach(file => {
-                    const stemType = file.stem_type;
-                    if (stemCategories.primary.includes(stemType)) {
-                        primaryStems.push(file);
-                    } else if (stemCategories.drumComponents.includes(stemType)) {
-                        drumComponents.push(file);
-                    } else {
-                        otherStems.push(file);
+    // Download multiple files with delay
+    function downloadFiles(downloadUrls) {
+        return new Promise((resolve) => {
+            downloadUrls.forEach((file, index) => {
+                setTimeout(() => {
+                    downloadIndividualStem(file.url, file.filename);
+                    
+                    // Resolve when last file download is initiated
+                    if (index === downloadUrls.length - 1) {
+                        setTimeout(resolve, 500);
                     }
-                });
-
-                // Sort primary stems in a logical order: vocals, bass, ee
-                primaryStems.sort((a, b) => {
-                    return stemCategories.primary.indexOf(a.stem_type) -
-                           stemCategories.primary.indexOf(b.stem_type);
-                });
-
-                // Sort drum components in a logical order: kick, snare, toms, hats
-                drumComponents.sort((a, b) => {
-                    return stemCategories.drumComponents.indexOf(a.stem_type) -
-                           stemCategories.drumComponents.indexOf(b.stem_type);
-                });
-
-                // Combine all stems in the desired order
-                orderedDownloads = [...primaryStems, ...drumComponents, ...otherStems];
-            }
-
-            // If fewer than 3 items, download simultaneously for speed
-            const useDelay = true; // Always stagger downloads
-            const delayMs = 3000; // 3 seconds between downloads
-            let downloadCount = 0;
-
-            // Download files with an optional delay between each
-            orderedDownloads.forEach((file, index) => {
-                if (!file.url) {
-                    console.error(`Failed to generate download URL for ${file.filename}`);
-                    failedDownloads.push(file);
-                    downloadCount++;
-
-                    if (downloadCount >= totalUrls) {
-                        resolve({
-                            totalDownloads: totalUrls,
-                            successfulDownloads,
-                            failedDownloads
-                        });
-                    }
-                    return;
-                }
-
-                // Function to perform the actual download
-                const performDownload = () => {
-                    try {
-                        const link = document.createElement('a');
-                        link.href = file.url;
-                        link.download = file.filename;
-                        link.style.display = 'none';
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-
-                        console.log(`Started download: ${file.filename} (${file.stem_type || 'unknown'})`);
-                        successfulDownloads++;
-                    } catch (error) {
-                        console.error(`Error downloading ${file.filename}:`, error);
-                        failedDownloads.push(file);
-                    }
-
-                    downloadCount++;
-                    // Resolve when all downloads have been initiated
-                    if (downloadCount >= totalUrls) {
-                        resolve({
-                            totalDownloads: totalUrls,
-                            successfulDownloads,
-                            failedDownloads
-                        });
-                    }
-                };
-
-                // Use delay or download immediately
-                if (useDelay) {
-                    // Stagger downloads with delay
-                    setTimeout(performDownload, index * delayMs);
-                } else {
-                    // Download immediately (for retries or small batches)
-                    performDownload();
-                }
+                }, index * 1000); // 1 second delay between downloads
             });
         });
     }
 
-    // Update the download section to show all stem types
-    function updateDownloadUI(stemData) {
+    // Show download complete message
+    function showDownloadComplete(button, count) {
+        // Remove any existing message
+        const existingMessage = button.parentNode.querySelector('.download-complete-message');
+        if (existingMessage) {
+            existingMessage.remove();
+        }
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'download-complete-message';
+        messageDiv.innerHTML = `
+            <div class="download-success-text">All ${count} stems have been initiated for download.</div>
+            <div class="download-warning-text">Please ensure all files have downloaded to your device before leaving this page. Downloads cannot be resumed after returning home or refreshing.</div>
+        `;
+        button.parentNode.appendChild(messageDiv);
+    }
+
+    // Add return home button
+    function addReturnHomeButton(button) {
+        // Check if Return Home button already exists
+        const existingHomeBtn = button.parentNode.querySelector('.return-home-btn');
+        if (existingHomeBtn) return;
+
+        const homeLink = document.createElement('a');
+        homeLink.className = 'btn mt-3 return-home-btn';
+        homeLink.innerHTML = 'Return to Home';
+        homeLink.href = '/';
+        homeLink.style.display = 'inline-block';
+        homeLink.style.textDecoration = 'none';
+
+        button.parentNode.appendChild(homeLink);
+    }
+
+    // Update UI to show individual stem downloads
+    function updateDownloadUI(stemFilesData) {
         try {
-            const stemFiles = JSON.parse(stemData);
+            stemData = JSON.parse(stemFilesData);
             const fileDetailsElement = document.querySelector('.file-details');
 
-            if (fileDetailsElement) {
+            if (fileDetailsElement && stemData) {
                 // Build stem type list for UI
-                const stemTypes = stemFiles.map(f => f.stem_type || 'unknown');
+                const stemTypes = stemData.map(f => f.stem_type || 'unknown');
                 const uniqueTypes = [...new Set(stemTypes)].filter(Boolean);
 
                 // Format stem types with proper capitalization
@@ -297,26 +189,176 @@
                     t === 'ee' ? 'EE' : t.charAt(0).toUpperCase() + t.slice(1)
                 ).join(', ');
 
-                // Update the details text
+                // Update the details text and add individual download options
                 fileDetailsElement.innerHTML = `
-                    Contains ${stemFiles.length} stems: ${formattedTypes}
+                    <div>Contains ${stemData.length} stems: ${formattedTypes}</div>
+                    <div class="individual-downloads mt-2">
+                        <div class="text-xs text-gray-500 mb-2">Individual downloads:</div>
+                        <div class="stem-list">
+                            ${stemData.map(stem => `
+                                <div class="stem-item" data-stem-type="${stem.stem_type}" data-filename="${stem.file_name}">
+                                    <span class="stem-name">${formatStemName(stem.stem_type)}</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="download-icon" title="Download ${formatStemName(stem.stem_type)}">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7 10 12 15 17 10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
                 `;
+
+                // Add click handlers for individual downloads
+                setupIndividualDownloadHandlers();
             }
         } catch (e) {
             console.error('Error updating download UI:', e);
         }
     }
 
-    // Attach auto-retry logic to download errors
-    window.addEventListener('error', function(e) {
-        // Only check for network errors related to our download domains
-        const errorSource = e.filename || '';
-        if (errorSource.includes('amazonaws.com') ||
-            errorSource.includes(window.location.hostname)) {
-            console.warn('Download resource error detected, may retry:', e);
-            // No need to do anything - the retry logic will handle this
-        }
-    }, true);
+    // Setup click handlers for individual stem downloads
+    function setupIndividualDownloadHandlers() {
+        const stemItems = document.querySelectorAll('.stem-item');
+        
+        stemItems.forEach(item => {
+            const downloadIcon = item.querySelector('.download-icon');
+            const stemType = item.dataset.stemType;
+            const filename = item.dataset.filename;
+            
+            // Remove any existing event listeners
+            const newDownloadIcon = downloadIcon.cloneNode(true);
+            downloadIcon.parentNode.replaceChild(newDownloadIcon, downloadIcon);
+            
+            newDownloadIcon.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                
+                console.log(`Individual download clicked for: ${stemType}`);
+                
+                // Try to find URL from cached data first
+                let downloadUrl = null;
+                
+                // Check if we have cached URLs from the main download
+                if (downloadUrlsCache) {
+                    const cachedUrl = downloadUrlsCache.find(url => 
+                        url.stem_type === stemType
+                    );
+                    if (cachedUrl && cachedUrl.url) {
+                        downloadUrl = cachedUrl.url;
+                    }
+                }
+                
+                // Check stem data
+                if (!downloadUrl && stemData) {
+                    const stem = stemData.find(s => s.stem_type === stemType);
+                    if (stem && stem.url) {
+                        downloadUrl = stem.url;
+                    }
+                }
+                
+                if (downloadUrl) {
+                    console.log(`Using cached URL for ${stemType}`);
+                    downloadIndividualStem(downloadUrl, filename);
+                    
+                    // Visual feedback
+                    newDownloadIcon.style.stroke = '#10b981';
+                    setTimeout(() => {
+                        newDownloadIcon.style.stroke = 'currentColor';
+                    }, 1000);
+                } else {
+                    console.log(`Fetching fresh URL for ${stemType}`);
+                    // If no URL available, fetch individual download URL
+                    fetchIndividualDownloadUrl(stemType, filename, newDownloadIcon);
+                }
+            });
+        });
+    }
+
+    // Fetch individual download URL
+    function fetchIndividualDownloadUrl(stemType, filename, downloadIcon) {
+        const baseName = document.getElementById('zip_file_name').value;
+        const stemFilesInput = document.getElementById('stem_files');
+        
+        // Show loading state on icon
+        downloadIcon.style.stroke = '#6b7280';
+        
+        fetch('/download/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            },
+            body: new URLSearchParams({
+                base_name: baseName,
+                stem_files: stemFilesInput.value
+            })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success') {
+                // Find the URL for this specific stem
+                const matchingUrl = data.download_urls.find(url => 
+                    url.stem_type === stemType
+                );
+                
+                if (matchingUrl && matchingUrl.url) {
+                    // Cache the URLs for future use
+                    if (!downloadUrlsCache) {
+                        downloadUrlsCache = data.download_urls;
+                    }
+                    
+                    // Update stem data with URL
+                    if (stemData) {
+                        const stem = stemData.find(s => s.stem_type === stemType);
+                        if (stem) {
+                            stem.url = matchingUrl.url;
+                        }
+                    }
+                    
+                    // Download the file
+                    downloadIndividualStem(matchingUrl.url, filename);
+                    
+                    // Visual feedback
+                    downloadIcon.style.stroke = '#10b981';
+                    setTimeout(() => {
+                        downloadIcon.style.stroke = 'currentColor';
+                    }, 1000);
+                } else {
+                    console.error(`No URL found for ${stemType}`);
+                    downloadIcon.style.stroke = '#ef4444'; // Red for error
+                    setTimeout(() => {
+                        downloadIcon.style.stroke = 'currentColor';
+                    }, 1000);
+                }
+            } else {
+                console.error(`Download failed: ${data.message}`);
+                downloadIcon.style.stroke = '#ef4444'; // Red for error
+                setTimeout(() => {
+                    downloadIcon.style.stroke = 'currentColor';
+                }, 1000);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching individual download URL:', error);
+            downloadIcon.style.stroke = '#ef4444'; // Red for error
+            setTimeout(() => {
+                downloadIcon.style.stroke = 'currentColor';
+            }, 1000);
+        });
+    }
+
+    // Format stem name for display
+    function formatStemName(stemType) {
+        if (stemType === 'ee') return 'EE';
+        return stemType.charAt(0).toUpperCase() + stemType.slice(1);
+    }
 
     // Listen for HTMX swap events to attach download handler
     document.body.addEventListener('htmx:afterSwap', (evt) => {
@@ -332,12 +374,11 @@
             }
 
             if (stemFilesInput) {
-                // Update UI to show all stem types
+                // Reset cache when new download section loads
+                downloadUrlsCache = null;
+                
+                // Update UI to show all stem types and individual downloads
                 updateDownloadUI(stemFilesInput.value);
-
-                // Reset retry counter for each new download session
-                retryCount = 0;
-                cachedStemData = null;
             }
         }
     });

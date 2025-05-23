@@ -329,3 +329,115 @@ h1 {
   border: 1px solid rgba(139, 92, 246, 0.3) !important;  
   overflow: hidden;
 }
+
+/* Individual stem download styles */
+.individual-downloads {
+  max-width: 100%;
+}
+
+/* Processing info styling */
+.processing-info {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(55, 65, 81, 0.3);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 6px;
+  text-align: center;
+}
+
+.processing-text {
+  font-size: 13px;
+  color: #d1d5db;
+  margin: 0 0 6px 0;
+  font-weight: 500;
+}
+
+.processing-timing {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 0;
+  font-style: italic;
+}
+
+/* Download complete message styling */
+.download-complete-message {
+  margin-top: 16px;
+  padding: 14px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 6px;
+  text-align: center;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.download-success-text {
+  font-size: 14px;
+  color: #34d399;
+  margin: 0 0 8px 0;
+  font-weight: 600;
+}
+
+.download-warning-text {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.stem-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.stem-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #e2e8f0;
+  transition: all 0.2s ease;
+}
+
+.stem-item:hover {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+.stem-name {
+  font-weight: 500;
+}
+
+.download-icon {
+  cursor: pointer;
+  stroke: #8b5cf6;
+  transition: stroke 0.2s ease;
+  flex-shrink: 0;
+}
+
+.download-icon:hover {
+  stroke: #a78bfa;
+}
+
+/* Responsive adjustments for small screens */
+@media (max-width: 480px) {
+  .stem-list {
+    gap: 6px;
+  }
+  
+  .stem-item {
+    padding: 3px 6px;
+    font-size: 11px;
+  }
+  
+  .download-icon {
+    width: 14px;
+    height: 14px;
+  }
+}

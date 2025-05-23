@@ -68,15 +68,24 @@ class ValidateKeygen(TemplateView):
 
         logger.info(f"Validating access for email: {email}")
         
-        if check_ghl_access(email):
+        has_access, access_type, message, email_found = check_ghl_access(email)
+        
+        if has_access:
             logger.info("Email access valid, storing in session")
             store_access_in_session(request, email)
-            return render(request, 'partials/file_upload_split.html', {'upload_section': True})
+            
+            # Get usage information for display
+            usage_info = get_user_usage_info(request)
+            context = {'upload_section': True}
+            context.update(usage_info)
+            
+            return render(request, 'partials/file_upload_split.html', context)
 
-        logger.warning("Invalid email or no access")
+        # Access denied - provide specific error message
+        logger.warning(f"Access denied for {email}: {message}")
         return render(request, 'partials/file_upload_split.html', {
             'email_section': True,
-            'error_message': 'Email not found or access not granted. Please check with support.'
+            'error_message': message
         })
 
 
@@ -139,6 +148,23 @@ def get_audio_duration(file_path, file_ext):
 class UploadFile(TemplateView):
     def post(self, request):
         logger.info("UploadFile POST received")
+        
+        # Check user's usage limits before processing the upload
+        can_use, limit_message = check_usage_limits(request)
+        if not can_use:
+            logger.warning(f"Usage limit reached during upload: {limit_message}")
+            
+            # Get usage info for display
+            usage_info = get_user_usage_info(request)
+            context = {
+                'upload_section': True,
+                'error_message': limit_message,
+                'show_upgrade_message': True
+            }
+            context.update(usage_info)
+            
+            return render(request, 'partials/file_upload_split.html', context)
+        
         uploaded_file = request.FILES.get('file')
         if not uploaded_file:
             logger.warning("No file uploaded")
@@ -461,9 +487,6 @@ class DownloadFile(View):
                         "error": str(e)
                     })
 
-            # Schedule quick delayed cleanup in the background (1 minute)
-            self._schedule_delayed_cleanup(stem_files_json)
-
             # Return download URLs
             logger.info(f"Returning {len(download_urls)} download URLs")
             return JsonResponse({
@@ -479,65 +502,6 @@ class DownloadFile(View):
                 'status': 'error',
                 'message': str(e)
             }, status=500)
-
-    def _schedule_delayed_cleanup(self, stem_files_json):
-        """Schedule a background task to clean up files after a short delay"""
-        import threading
-        import time
-
-        def delayed_cleanup():
-            # Wait to ensure downloads have had time to start
-            time.sleep(200)  # 200 seconds
-
-            try:
-                logger.info("Starting quick delayed cleanup of S3 files (1-minute delay)")
-                stem_files = json.loads(stem_files_json)
-
-                # Get S3 client
-                s3_client = get_s3()
-                if not s3_client:
-                    logger.error("S3 client not available for cleanup")
-                    return
-
-                # Delete files from S3
-                deleted = []
-                failed = []
-
-                for item in stem_files:
-                    # Handle both dictionary and string formats
-                    if isinstance(item, dict):
-                        s3_key = item.get('s3_key')
-                    elif isinstance(item, str):
-                        s3_key = item
-                    else:
-                        logger.warning(f"Skipping invalid item type: {type(item)}")
-                        continue
-
-                    if not s3_key:
-                        continue
-
-                    try:
-                        logger.info(f"Deleting from S3: {s3_key}")
-                        s3_client.delete_object(
-                            Bucket=settings.S3_BUCKET_NAME,
-                            Key=s3_key
-                        )
-                        deleted.append(s3_key)
-                    except Exception as e:
-                        logger.error(f"Failed to delete {s3_key}: {str(e)}")
-                        failed.append({'key': s3_key, 'error': str(e)})
-
-                logger.info(f"Quick cleanup complete. Deleted: {len(deleted)}, Failed: {len(failed)}")
-
-            except Exception as e:
-                logger.error(f"Error in delayed cleanup: {str(e)}")
-                logger.error(traceback.format_exc())
-
-        # Start the cleanup task in a background thread
-        cleanup_thread = threading.Thread(target=delayed_cleanup)
-        cleanup_thread.daemon = True  # Allow the app to exit even if thread is running
-        cleanup_thread.start()
-        logger.info("Scheduled quick delayed cleanup task")
 
 
 @method_decorator(csrf_exempt, name='dispatch')
