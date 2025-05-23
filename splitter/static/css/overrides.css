@@ -1,0 +1,70 @@
+/* Override rules to ensure proper styling */
+
+/* Background must be transparent */
+body, .container, main, #step-upload {
+    background-color: transparent !important;
+}
+
+/* Force the user account info styling */
+#step-upload .user-account-info {
+    margin-bottom: 16px !important;
+    background-color: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+#step-upload .user-email {
+    color: white !important;
+}
+
+#step-upload .user-email svg,
+#step-upload .user-icon {
+    stroke: #a9b1fc !important;
+    color: #a9b1fc !important;
+}
+
+#step-upload .usage-counter {
+    color: white !important;
+}
+
+#step-upload .usage-remaining {
+    color: #a9b1fc !important;
+}
+
+/* Force the dropzone styling */
+#step-upload .dropzone {
+    border: 2px dashed #4b5563 !important;
+    border-radius: 10px !important;
+    background-color: transparent !important;
+}
+
+#step-upload .dropzone:hover,
+#step-upload .dropzone.drag-over {
+    border-color: rgba(139, 92, 246, 0.5) !important;
+    background-color: rgba(139, 92, 246, 0.1) !important;
+}
+
+/* Ensure the purple color only applies to correct elements */
+#step-upload .hover-purple,
+#step-upload .upload-browse,
+#step-upload .upload-formats {
+    color: #a9b1fc !important;
+}
+
+#step-upload .dropzone:hover .hover-purple,
+#step-upload .dropzone.drag-over .hover-purple {
+    color: #a9b1fc !important;
+}
+
+#step-upload .dropzone-icon svg,
+#step-upload .upload-svg {
+    stroke: #a9b1fc !important;
+}
+
+#step-upload .upload-instructions {
+    color: white !important;
+}
+
+#step-upload .upload-duration {
+    color: #e74c3c !important;
+} 

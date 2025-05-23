@@ -10,7 +10,14 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.conf import settings
-from .utils import check_key, is_license_valid, store_license_in_session, clear_license, check_ghl_access, store_access_in_session, clear_access, is_access_valid
+from django.utils import timezone
+from .models import SplitUsage
+from .utils import (
+    check_key, is_license_valid, store_license_in_session, clear_license, 
+    check_ghl_access, store_access_in_session, clear_access, is_access_valid, 
+    check_usage_limits, validate_file_duration, record_usage, get_current_user,
+    get_user_usage_info
+)
 from .mvsep_processor import MVSepProcessor
 
 logger = logging.getLogger("general_logger")
@@ -25,7 +32,26 @@ def get_s3():
 
 class HomePage(TemplateView):
     def get(self, request):
-        context = {'upload_section': True} if is_access_valid(request) else {'email_section': True}
+        context = {}
+        
+        if is_access_valid(request):
+            context['upload_section'] = True
+            
+            # Get usage information
+            usage_info = get_user_usage_info(request)
+            context.update(usage_info)
+            
+            # For the image styling, ensure monthly usage is the default display format
+            if not context.get('unlimited_usage'):
+                context['monthly_reset'] = True
+                if 'usage_label' not in context:
+                    context['usage_label'] = 'Monthly Usage'
+            
+            # Log the context for debugging
+            logger.info(f"Usage info: {usage_info}")
+        else:
+            context['email_section'] = True
+            
         return render(request, 'home.html', context)
 
 
@@ -54,6 +80,62 @@ class ValidateKeygen(TemplateView):
         })
 
 
+def get_audio_duration(file_path, file_ext):
+    """Get audio file duration using multiple methods with fallbacks"""
+    duration = None
+    errors = []
+    
+    # Try librosa first - most accurate but can fail on some installations
+    try:
+        import librosa
+        duration = librosa.get_duration(path=file_path)
+        logger.info(f"File duration via librosa: {duration:.2f} seconds")
+        return duration
+    except Exception as e:
+        errors.append(f"Librosa error: {str(e)}")
+    
+    # Try pydub
+    try:
+        from pydub import AudioSegment
+        if file_ext.lower() == '.mp3':
+            audio = AudioSegment.from_mp3(file_path)
+        elif file_ext.lower() == '.wav':
+            audio = AudioSegment.from_wav(file_path)
+        elif file_ext.lower() == '.flac':
+            audio = AudioSegment.from_file(file_path, format="flac")
+        elif file_ext.lower() in ['.aif', '.aiff']:
+            audio = AudioSegment.from_file(file_path, format="aiff")
+        else:
+            # Generic audio load for other formats
+            audio = AudioSegment.from_file(file_path)
+            
+        # Duration in milliseconds, convert to seconds
+        duration = len(audio) / 1000.0
+        logger.info(f"File duration via pydub: {duration:.2f} seconds")
+        return duration
+    except Exception as e:
+        errors.append(f"Pydub error: {str(e)}")
+    
+    # Last resort - check file size
+    # Very rough estimate, assuming ~1.4MB per minute for compressed audio
+    # This is just a fallback to prevent system abuse
+    try:
+        file_size_bytes = os.path.getsize(file_path)
+        file_size_mb = file_size_bytes / (1024 * 1024)
+        # Extremely conservative estimate: assume file is highly compressed
+        # This will potentially allow files that are too long but prevents abuse
+        est_duration_minutes = file_size_mb / 1.0  # ~1MB per minute is a conservative estimate
+        est_duration_seconds = est_duration_minutes * 60
+        logger.warning(f"Using fallback file size estimation: {est_duration_seconds:.2f} seconds (based on {file_size_mb:.2f}MB)")
+        return est_duration_seconds
+    except Exception as e:
+        errors.append(f"File size estimation error: {str(e)}")
+    
+    # If all methods fail, log errors and return a large value to ensure file is rejected
+    logger.error(f"All duration detection methods failed: {errors}")
+    return 9999  # Return a large value to ensure the file is rejected
+
+
 class UploadFile(TemplateView):
     def post(self, request):
         logger.info("UploadFile POST received")
@@ -74,6 +156,57 @@ class UploadFile(TemplateView):
             return render(request, 'partials/file_upload_split.html', {
                 'upload_section': True,
                 'error_message': f"Unsupported file type: {ext}. Must be .wav, .mp3, .flac, or .aif."
+            })
+            
+        # Create temporary file to check duration
+        try:
+            # Save to temporary file
+            temp_file_path = f"/tmp/{uuid.uuid4().hex}{ext}"
+            with open(temp_file_path, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+                    
+            # Check duration
+            try:
+                # Maximum allowed duration: 10 minutes = 600 seconds
+                MAX_DURATION_SECONDS = 600
+                
+                # Use our robust duration detection
+                duration = get_audio_duration(temp_file_path, ext)
+                logger.info(f"Final detected duration: {duration} seconds")
+                
+                if duration > MAX_DURATION_SECONDS:
+                    minutes = int(duration / 60)
+                    seconds = int(duration % 60)
+                    logger.warning(f"File too long: {duration:.2f} seconds (max: {MAX_DURATION_SECONDS})")
+                    os.remove(temp_file_path)  # Clean up
+                    return render(request, 'partials/file_upload_split.html', {
+                        'upload_section': True,
+                        'error_message': f"File too long ({minutes} min {seconds} sec). Maximum allowed duration is 10 minutes."
+                    })
+            except Exception as e:
+                logger.error(f"Error checking duration: {str(e)}")
+                # Be cautious - if we can't check duration, reject files over 15MB
+                # This is a very conservative fallback (15MB = ~10 mins of MP3 at 192kbps)
+                if uploaded_file.size > 15 * 1024 * 1024:
+                    logger.warning(f"File size too large: {uploaded_file.size} bytes, rejecting as potential long file")
+                    os.remove(temp_file_path)  # Clean up
+                    return render(request, 'partials/file_upload_split.html', {
+                        'upload_section': True,
+                        'error_message': f"File may be too large. Maximum allowed duration is 10 minutes."
+                    })
+            
+            # Rewind uploaded file for S3 upload
+            uploaded_file.seek(0)
+            
+            # Clean up temp file
+            os.remove(temp_file_path)
+                
+        except Exception as e:
+            logger.error(f"Error processing upload: {str(e)}")
+            return render(request, 'partials/file_upload_split.html', {
+                'upload_section': True,
+                'error_message': f"Error processing file: {str(e)}"
             })
 
         # Generate a unique ID for the file
@@ -131,6 +264,15 @@ class SplitFile(TemplateView):
                     'error_message': "Missing file information."
                 })
 
+            # Check user's usage limits
+            can_use, limit_message = check_usage_limits(request)
+            if not can_use:
+                logger.warning(f"Usage limit reached: {limit_message}")
+                return render(request, 'partials/file_upload_split.html', {
+                    'upload_section': True,
+                    'error_message': limit_message
+                })
+
             # Get S3 client
             s3_client = get_s3()
             if not s3_client:
@@ -149,6 +291,21 @@ class SplitFile(TemplateView):
             # Check if file exists and has content
             if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
                 raise Exception(f"Downloaded file is missing or empty: {local_path}")
+                
+            # Check file duration
+            is_valid_duration, duration_result = validate_file_duration(local_path)
+            if not is_valid_duration:
+                os.remove(local_path)  # Clean up
+                logger.warning(f"File duration check failed: {duration_result}")
+                return render(request, 'partials/file_upload_split.html', {
+                    'upload_section': True,
+                    'error_message': duration_result
+                })
+                
+            # Get the current user
+            user = get_current_user(request)
+            if not user:
+                raise Exception("User not authenticated properly")
 
             # Create output directory
             local_output_dir = f"/tmp/{uuid.uuid4().hex}"
@@ -189,6 +346,11 @@ class SplitFile(TemplateView):
                         "s3_key": s3_stem_key,
                         "stem_type": stem_type
                     })
+                    
+                # Record usage for this user
+                file_duration_seconds = int(duration_result) if isinstance(duration_result, (int, float)) else 0
+                record_usage(user, file_name, file_duration_seconds)
+                
             finally:
                 # Clean up processor resources
                 processor.cleanup()

@@ -1,0 +1,110 @@
+/* User Interface Styles - Specifically for the file upload screen */
+
+/* Main container background styles */
+.container {
+    background-color: #111827;
+    color: white;
+}
+
+/* User Account Info Styles */
+#step-upload .user-account-info {
+    margin-bottom: 16px;
+    margin-left: 2px;
+}
+
+#step-upload .user-email {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    margin-bottom: 4px;
+    color: white;
+}
+
+#step-upload .user-email svg {
+    color: #a9b1fc;
+    stroke: #a9b1fc;
+}
+
+#step-upload .usage-counter {
+    color: white;
+    font-size: 14px;
+    margin-bottom: 2px;
+    font-weight: normal;
+}
+
+#step-upload .usage-remaining {
+    color: #a9b1fc;
+    font-size: 14px;
+    font-weight: normal;
+}
+
+#step-upload .usage-unlimited {
+    color: white;
+    font-size: 14px;
+}
+
+/* Dropzone Styles */
+#step-upload .dropzone {
+    border: 2px dashed #4b5563;
+    border-radius: 10px;
+    padding: 32px;
+    text-align: center;
+    transition: all 0.2s ease;
+    margin-bottom: 15px;
+    cursor: pointer;
+    background-color: transparent;
+}
+
+#step-upload .dropzone:hover,
+#step-upload .dropzone.drag-over {
+    border-color: rgba(139, 92, 246, 0.5);
+    background-color: rgba(139, 92, 246, 0.1);
+}
+
+/* Hover effects */
+#step-upload .dropzone:hover .upload-svg,
+#step-upload .dropzone.drag-over .upload-svg {
+    stroke: #a9b1fc;
+}
+
+#step-upload .dropzone:hover .hover-purple,
+#step-upload .dropzone.drag-over .hover-purple {
+    color: #a9b1fc;
+}
+
+#step-upload .dropzone-icon {
+    margin-bottom: 15px;
+}
+
+#step-upload .dropzone-icon svg {
+    color: #a9b1fc;
+    stroke: #a9b1fc;
+}
+
+#step-upload .upload-instructions {
+    color: white;
+    font-size: 16px;
+    font-weight: normal;
+    margin-bottom: 6px;
+}
+
+#step-upload .upload-browse {
+    color: #a9b1fc;
+    font-size: 14px;
+    margin-bottom: 15px;
+    font-weight: normal;
+}
+
+#step-upload .upload-formats {
+    color: #a9b1fc;
+    font-size: 14px;
+    margin-bottom: 6px;
+    font-weight: normal;
+}
+
+#step-upload .upload-duration {
+    color: #e74c3c;
+    font-size: 14px;
+    font-weight: normal;
+} 
